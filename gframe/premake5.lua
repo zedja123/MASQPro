@@ -50,9 +50,8 @@ local ygopro_config=function(static_core)
 	else
 		excludes { "CGUITTFont/bundled_font.cpp" }
 	end
-	includedirs { "../ocgcore", "../discord-social/include" }
-	links { "clzma", "Irrlicht", "discord_partner_sdk" }
-	libdirs { "../discord-social/lib" }
+	includedirs { "../ocgcore" }
+	links { "clzma", "Irrlicht" }
 	filter "system:macosx or ios"
 	links { "iconv" }
 	filter {}
