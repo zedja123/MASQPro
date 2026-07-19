@@ -296,7 +296,7 @@ void ClientUpdater::CheckUpdate() {
         const auto& version = j.at("version").get_ref<const std::string&>();
 
         // Já está atualizado
-		if(CompareVersions(version, EDOPRO_VERSION_STRING) <= 0) {
+		if(CompareVersions(version, MASQPRO_VERSION_STRING) <= 0) {
 			has_update = false;
 			return;
 		}
