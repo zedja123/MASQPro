@@ -27,6 +27,36 @@
 
 using md5array = std::array<uint8_t, MD5_DIGEST_LENGTH>;
 
+struct Version {
+	int major = 0;
+	int minor = 0;
+	int patch = 0;
+};
+
+static Version ParseVersion(const std::string& version) {
+	Version v;
+
+	sscanf(version.c_str(), "%d.%d.%d", &v.major, &v.minor, &v.patch);
+
+	return v;
+}
+
+static int CompareVersions(const std::string& lhs, const std::string& rhs) {
+	Version a = ParseVersion(lhs);
+	Version b = ParseVersion(rhs);
+
+	if(a.major != b.major)
+		return (a.major > b.major) ? 1 : -1;
+
+	if(a.minor != b.minor)
+		return (a.minor > b.minor) ? 1 : -1;
+
+	if(a.patch != b.patch)
+		return (a.patch > b.patch) ? 1 : -1;
+
+	return 0;
+}
+
 struct WritePayload {
 	std::vector<char>* outbuffer = nullptr;
 	std::ostream* outstream = nullptr;
@@ -245,27 +275,56 @@ void ClientUpdater::DownloadUpdate(void* payload, update_callback callback) {
 }
 
 void ClientUpdater::CheckUpdate() {
-	Utils::SetThreadName("CheckUpdate");
-	WritePayload payload{};
-	std::vector<char> retrieved_data;
-	payload.outbuffer = &retrieved_data;
-	if(curlPerform(update_url.data(), &payload) != CURLE_OK)
-		return;
-	try {
-		const auto j = nlohmann::json::parse(retrieved_data);
-		if(!j.is_array())
+    Utils::SetThreadName("CheckUpdate");
+
+    WritePayload payload{};
+    std::vector<char> retrieved_data;
+    payload.outbuffer = &retrieved_data;
+
+    if(curlPerform(update_url.data(), &payload) != CURLE_OK)
+        return;
+
+    try {
+        update_urls.clear();
+
+        const auto j = nlohmann::json::parse(retrieved_data);
+
+        if(!j.is_object())
+            return;
+
+        // Lê a versão disponível no servidor
+        const auto& version = j.at("version").get_ref<const std::string&>();
+
+        // Já está atualizado
+		if(CompareVersions(version, MASQPRO_VERSION_STRING) <= 0) {
+			has_update = false;
 			return;
-		for(const auto& asset : j) {
-			try {
-				const auto& url = asset.at("url").get_ref<const std::string&>();
-				const auto& name = asset.at("name").get_ref<const std::string&>();
-				const auto& md5 = asset.at("md5").get_ref<const std::string&>();
-				update_urls.emplace_back(DownloadInfo{ name, url, md5 });
-			} catch(...) {}
 		}
-	}
-	catch(...) { update_urls.clear(); }
-	has_update = !!update_urls.size();
+
+        // Lê os arquivos da atualização
+        const auto& files = j.at("files");
+
+        if(!files.is_array())
+            return;
+
+        for(const auto& asset : files) {
+            try {
+                const auto& url  = asset.at("url").get_ref<const std::string&>();
+                const auto& name = asset.at("name").get_ref<const std::string&>();
+                const auto& md5  = asset.at("md5").get_ref<const std::string&>();
+
+                update_urls.emplace_back(DownloadInfo{ name, url, md5 });
+            }
+            catch(...) {
+            }
+        }
+
+        has_update = !update_urls.empty();
+    }
+    catch(...) {
+        update_urls.clear();
+        has_update = false;
+    }
 }
 
 static inline void DeleteOld() {
