@@ -637,7 +637,7 @@ namespace ygo {
 			}
 			return ret;
 		};
-		static const std::string agent = epro::format("EDOPro-" OSSTRING "-" STR(EDOPRO_VERSION_MAJOR) "." STR(EDOPRO_VERSION_MINOR) "." STR(EDOPRO_VERSION_PATCH)" {}",
+		static const std::string agent = epro::format("MASQPro-" OSSTRING "-" STR(EDOPRO_VERSION_MAJOR) "." STR(EDOPRO_VERSION_MINOR) "." STR(EDOPRO_VERSION_PATCH)" {}",
 													  EscapeUTF8(Utils::OSOperator->getOperatingSystemVersion()));
 		return agent;
 	}
