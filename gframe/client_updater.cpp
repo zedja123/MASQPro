@@ -21,6 +21,7 @@
 #include "game_config.h"
 #include "fmt.h"
 #include "curl.h"
+#include <filesystem>
 
 #define LOCKFILE EPRO_TEXT("./.edopro_lock")
 #define UPDATES_FOLDER EPRO_TEXT("./updates/{}")
@@ -329,12 +330,19 @@ void ClientUpdater::CheckUpdate() {
 
 static inline void DeleteOld() {
 #if EDOPRO_WINDOWS || EDOPRO_LINUX
-	ygo::Utils::FileDelete(epro::format(EPRO_TEXT("{}.old"), ygo::Utils::GetExePath()));
+    ygo::Utils::FileDelete(epro::format(EPRO_TEXT("{}.old"), ygo::Utils::GetExePath()));
 #endif
+
 #if EDOPRO_WINDOWS
-	ygo::Utils::FileDelete(epro::format(EPRO_TEXT("{}.old"), ygo::Utils::GetCorePath()));
+    ygo::Utils::FileDelete(epro::format(EPRO_TEXT("{}.old"), ygo::Utils::GetCorePath()));
 #endif
-	(void)0;
+
+    try {
+        std::filesystem::remove_all(EPRO_TEXT("./updates"));
+    } catch(...) {
+    }
+
+    (void)0;
 }
 
 ClientUpdater::ClientUpdater(epro::path_stringview override_url) {
