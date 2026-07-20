@@ -173,8 +173,10 @@ for ($i = 0; $i -lt $maxAttempts; $i++) {
 }
 
 gh release create `
+    --repo zedja123/MASQPro `
     $version `
     $zip `
-    --title "MASQPro $version `"$codename`""
+    --title "MASQPro $version `"$codename`"" `
+    --verify-tag
 
 Write-Host "Release $version completed."
