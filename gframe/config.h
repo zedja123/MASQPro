@@ -13,7 +13,7 @@ extern bool show_changelog;
 
 #define EDOPRO_VERSION_MAJOR 1
 #define EDOPRO_VERSION_MINOR 0
-#define EDOPRO_VERSION_PATCH 11
+#define EDOPRO_VERSION_PATCH 12
 #define MASQPRO_VERSION_STRING \
     STR(EDOPRO_VERSION_MAJOR) "." \
     STR(EDOPRO_VERSION_MINOR) "." \
@@ -29,6 +29,7 @@ extern bool show_changelog;
 #define EXPAND_VERSION(ver) GET_CLIENT_VERSION_MAJOR(ver), GET_CLIENT_VERSION_MINOR(ver), GET_CORE_VERSION_MAJOR(ver), GET_CORE_VERSION_MINOR(ver)
 
 #endif
+
 
 
 
