@@ -163,20 +163,31 @@ $maxAttempts = 10
 
 for ($i = 0; $i -lt $maxAttempts; $i++) {
 
-    git ls-remote --tags origin | Select-String $version
+    $tagFound = git ls-remote --tags origin | Select-String $version
 
-    if ($LASTEXITCODE -eq 0) {
-        break
-    }
+        if ($tagFound) {
+            break
+        }
 
     Start-Sleep 2
 }
 
-gh release create `
-    --repo zedja123/MASQPro `
+$title = "MASQPro $version `"$codename`""
+
+Write-Host ""
+Write-Host "Creating GitHub Release..."
+Write-Host ""
+
+& gh release create `
     $version `
     $zip `
-    --title "MASQPro $version `"$codename`"" `
+    --repo zedja123/MASQPro `
+    --title $title `
     --verify-tag
 
-Write-Host "Release $version completed."
+if ($LASTEXITCODE -ne 0) {
+    throw "GitHub Release creation failed (ExitCode=$LASTEXITCODE)"
+}
+
+Write-Host ""
+Write-Host "Release created successfully." -ForegroundColor Green
