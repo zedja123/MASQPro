@@ -46,3 +46,5 @@ premake5.exe
 bundled_font.cpp
 NotoSansJP-Regular.otf
 /discord-social/
+installer/Output/
+MASQPro.zip

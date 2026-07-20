@@ -24,15 +24,15 @@ if(!$config){ throw "config.h not found." }
 
 $content = Get-Content $config.FullName -Raw
 
-function Get-VersionValue($name){
+function Get-VersionValue($Macro){
 
     $match = [regex]::Match(
         $content,
-        "#define\s+$name\s+(\d+)"
+        "(?m)^#define\s+$Macro\s+(\d+)"
     )
 
     if(!$match.Success){
-        throw "Couldn't find $name"
+        throw "Couldn't find macro '$Macro'"
     }
 
     return [int]$match.Groups[1].Value
@@ -51,8 +51,12 @@ switch($Type){
 
 $currentCodename = [regex]::Match(
     $content,
-    '#define\s+EDOPRO_VERSION_CODENAME\s+"([^"]+)"'
+    '(?m)^#define\s+EDOPRO_VERSION_CODENAME\s+"([^"]+)"'
 ).Groups[1].Value
+
+if([string]::IsNullOrWhiteSpace($currentCodename)){
+    throw "Couldn't read EDOPRO_VERSION_CODENAME."
+}
 
 Write-Host ""
 Write-Host "Current Codename: $currentCodename"
