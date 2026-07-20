@@ -89,13 +89,6 @@ Set-Content $config.FullName $content -Encoding UTF8
 
 # Locate MSBuild
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-Write-Host ""
-Write-Host "=========================="
-Write-Host "Building solution..."
-Write-Host "Solution: $($solution.FullName)"
-Write-Host "MSBuild : $msbuild"
-Write-Host "=========================="
-Write-Host ""
 $msbuild = $null
 if(Test-Path $vswhere){
     $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
@@ -133,11 +126,28 @@ Write-Host ""
 
 $solution = Join-Path $ProjectRoot "build\ygo.sln"
 
-if(!(Test-Path $solution)){
-    throw "Couldn't find build\ygo.sln. Did you run premake?"
+if (!(Test-Path $solution)) {
+    throw "Solution not found: $solution"
 }
+Write-Host "ProjectRoot = [$ProjectRoot]"
+Write-Host "Solution    = [$solution]"
+Write-Host "Exists      = $(Test-Path $solution)"
+Write-Host "MSBuild     = [$msbuild]"
+$arguments = @(
+    $solution
+    "/t:Rebuild"
+    "/m"
+    "/p:Configuration=Release"
+)
 
-if($LASTEXITCODE -ne 0){ throw "Build failed." }
+Write-Host "Arguments:"
+$arguments | ForEach-Object { Write-Host "  $_" }
+
+& $msbuild @arguments
+
+if ($LASTEXITCODE -ne 0) {
+    throw "MSBuild failed (ExitCode=$LASTEXITCODE)"
+}
 
 $releaseFiles=@("MASQPro.exe","ocgcore.dll")
 $temp=Join-Path $env:TEMP "MASQProRelease"
