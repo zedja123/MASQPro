@@ -3296,6 +3296,10 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 		}
 		return true;
 	}
+	case MSG_SUMMONED: {
+		event_string = gDataManager->GetSysString(1604).data();
+		return true;
+	}
 	case MSG_SPSUMMONING: {
 		const auto code = BufferIO::Read<uint32_t>(pbuf);
 		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
@@ -3315,150 +3319,8 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 		}
 		return true;
 	}
-	case MSG_RITUALSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::RITUAL_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7001), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_FUSIONSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::FUSION_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7002), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_SYNCHROSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::SYNCHRO_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7003), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_XYZSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::XYZ_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7004), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_LINKSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::LINK_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7005), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_PENDULUMSUMMONING: {
-		const auto code = BufferIO::Read<uint32_t>(pbuf);
-		/*CoreUtils::loc_info info = CoreUtils::ReadLocInfo(pbuf, mainGame->dInfo.compat_mode);*/
-		if(!code || !PlayChant(SoundManager::CHANT::SUMMON, code))
-			Play(SoundManager::SFX::PENDULUM_SUMMON);
-		if(!mainGame->dInfo.isCatchingUp) {
-			std::unique_lock<epro::mutex> lock(mainGame->gMutex);
-			event_string = epro::sprintf(gDataManager->GetSysString(7006), gDataManager->GetName(code));
-			if(code) {
-				mainGame->showcardcode = code;
-				mainGame->showcarddif = 1;
-				mainGame->showcard = 5;
-				mainGame->WaitFrameSignal(30, lock);
-				mainGame->showcard = 0;
-				mainGame->WaitFrameSignal(11, lock);
-			}
-		}
-		return true;
-	}
-	case MSG_SUMMONED: {
-		event_string = gDataManager->GetSysString(1604).data();
-		return true;
-	}
 	case MSG_SPSUMMONED: {
 		event_string = gDataManager->GetSysString(1606).data();
-		return true;
-	}
-	case MSG_RITUALSUMMONED: {
-		event_string = gDataManager->GetSysString(7011).data();
-		return true;
-	}
-	case MSG_FUSIONSUMMONED: {
-		event_string = gDataManager->GetSysString(7012).data();
-		return true;
-	}
-	case MSG_SYNCHROSUMMONED: {
-		event_string = gDataManager->GetSysString(7013).data();
-		return true;
-	}
-	case MSG_XYZSUMMONED: {
-		event_string = gDataManager->GetSysString(7014).data();
-		return true;
-	}
-	case MSG_LINKSUMMONED: {
-		event_string = gDataManager->GetSysString(7015).data();
-		return true;
-	}
-	case MSG_PENDULUMSUMMONED: {
-		event_string = gDataManager->GetSysString(7016).data();
 		return true;
 	}
 	case MSG_FLIPSUMMONING: {

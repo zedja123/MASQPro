@@ -123,12 +123,6 @@ void SoundManager::RefreshSoundsList() {
 	static constexpr std::pair<SFX, epro::path_stringview> fx[]{
 		{SUMMON, EPRO_TEXT("./sound/summon.{}"sv)},
 		{SPECIAL_SUMMON, EPRO_TEXT("./sound/specialsummon.{}"sv)},
-		{RITUAL_SUMMON, EPRO_TEXT("./sound/ritualsummon.{}"sv)},
-		{SYNCHRO_SUMMON, EPRO_TEXT("./sound/synchrosummon.{}"sv)},
-		{XYZ_SUMMON, EPRO_TEXT("./sound/xyzsummon.{}"sv)},
-		{FUSION_SUMMON, EPRO_TEXT("./sound/fusionsummon.{}"sv)},
-		{LINK_SUMMON, EPRO_TEXT("./sound/linksummon.{}"sv)},
-		{PENDULUM_SUMMON, EPRO_TEXT("./sound/pendulumsummon.{}"sv)},
 		{ACTIVATE, EPRO_TEXT("./sound/activate.{}"sv)},
 		{SET, EPRO_TEXT("./sound/set.{}"sv)},
 		{FLIP, EPRO_TEXT("./sound/flip.{}"sv)},

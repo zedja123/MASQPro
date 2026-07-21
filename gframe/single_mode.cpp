@@ -487,12 +487,6 @@ bool SingleMode::SinglePlayAnalyze(CoreUtils::Packet& packet) {
 		case MSG_NEW_PHASE:
 		case MSG_SUMMONED:
 		case MSG_SPSUMMONED:
-		case MSG_RITUALSUMMONED:
-		case MSG_FUSIONSUMMONED:
-		case MSG_SYNCHROSUMMONED:
-		case MSG_XYZSUMMONED:
-		case MSG_LINKSUMMONED:
-		case MSG_PENDULUMSUMMONED:
 		case MSG_FLIPSUMMONED:
 		case MSG_CHAINED:
 		case MSG_CHAIN_SOLVED:

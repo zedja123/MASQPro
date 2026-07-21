@@ -671,7 +671,7 @@ inline bool check_either_skills(uint32_t type1, uint32_t type2) {
 }
 static constexpr uint32_t monster_spell_trap = TYPE_MONSTER | TYPE_SPELL | TYPE_TRAP;
 static constexpr uint32_t not_monster_spell_trap = ~monster_spell_trap;
-static constexpr uint32_t spsummon_proc_types = TYPE_LINK | TYPE_XYZ | TYPE_SYNCHRO | TYPE_RITUAL | TYPE_FUSION | TYPE_PENDULUM;;
+static constexpr uint32_t spsummon_proc_types = TYPE_LINK | TYPE_XYZ | TYPE_SYNCHRO | TYPE_RITUAL | TYPE_FUSION;
 
 inline bool check_codes(const CardDataC* p1, const CardDataC* p2) {
 	if(p1->alias == p2->code)
