@@ -300,19 +300,6 @@
 #define MSG_CUSTOM_MSG           180
 #define MSG_REMOVE_CARDS         190
 
-#define MSG_RITUALSUMMONING      200
-#define MSG_FUSIONSUMMONING      201
-#define MSG_SYNCHROSUMMONING     202
-#define MSG_XYZSUMMONING         203
-#define MSG_LINKSUMMONING        204
-#define MSG_PENDULUMSUMMONING    205
-#define MSG_RITUALSUMMONED       206
-#define MSG_FUSIONSUMMONED       207
-#define MSG_SYNCHROSUMMONED      208
-#define MSG_XYZSUMMONED          209
-#define MSG_LINKSUMMONED         210
-#define MSG_PENDULUMSUMMONED     211
-
 /* Duel Hints */
 #define HINT_EVENT      1
 #define HINT_MESSAGE    2
