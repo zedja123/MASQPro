@@ -1,0 +1,16 @@
+[Bb]uild*/
+bin/
+libs/
+obj/
+subprojects/
+tmp/
+.vscode/
+.idea/
+.vs/
+.DS_Store
+*.exe
+*.pdb
+*.lib
+*.dll
+*.exp
+*.zip

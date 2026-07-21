@@ -1,0 +1,469 @@
+name: Build EDOPro-core
+on: [push, pull_request]
+env:
+  BUILD_CONFIG: release
+  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/download/20220927
+  DEPLOY_DIR: ocgcore
+  DEPLOY_REPO: ${{ secrets.DEPLOY_REPO }}
+  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+jobs:
+  Windows-visual-studio:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [Win32, x64, ARM, ARM64]
+        include:
+          - arch: Win32
+            deploy-branch: travis-core-windows
+          - arch: x64
+            deploy-branch: travis-core-windows-x64
+          - arch: ARM
+            deploy-branch: travis-core-windows-arm
+          - arch: ARM64
+            deploy-branch: travis-core-windows-aarch64
+    runs-on: windows-2019
+    env:
+      DEPLOY_BRANCH: ${{ matrix.deploy-branch }}
+      TRAVIS_OS_NAME: windows
+      VISUAL_STUDIO_ARCH: ${{ matrix.arch }}
+      VISUAL_STUDIO_VERSION: vs2019
+      PREMAKE_FLAGS: --oldwindows=true
+    steps:
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v2
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Install premake
+      shell: cmd
+      run: "scripts/install-premake5"
+    - name: Build
+      shell: bash
+      run: ./scripts/build-premake5-msvc.sh
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Windows-mingw:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [win32, x64]
+        include:
+          - arch: win32
+            deploy-branch: travis-core-windows-mingw
+          - arch: x64
+            deploy-branch: travis-core-windows-mingw-x64
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ matrix.deploy-branch }}
+      TRAVIS_OS_NAME: linux
+      TARGET_OS: windows
+      BUILD_CONFIG: ${{ format('release_{0}', matrix.arch) }}
+      CC: cc
+      CXX: c++
+    steps:
+    - name: Set up MinGW
+      uses: egor-tensin/setup-mingw@v2
+      with:
+        platform: ${{ matrix.arch }}
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Install premake
+      shell: bash
+      run: ./scripts/install-premake5.sh
+    - name: Build
+      shell: bash
+      run: ./scripts/build-premake5.sh
+    - name: Predeploy
+      shell: bash
+      env:
+        STRIP: 1
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Linux-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        deploy-branch: [travis-core-linux-musl, travis-core-linux-musl-apicheck, travis-core-linux-musl-aarch64]
+        include:
+          - deploy-branch: travis-core-linux-musl
+            docker-image: x86_64-linux-musl
+            premake-flags: 
+          - deploy-branch: travis-core-linux-musl-apicheck
+            docker-image: x86_64-linux-musl
+            premake-flags: --lua-apicheck
+          - deploy-branch: travis-core-linux-musl-aarch64
+            docker-image: aarch64-linux-musl
+            premake-flags: 
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ matrix.deploy-branch }}
+      TRAVIS_OS_NAME: linux
+      CXX: musl-g++
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Setup alpine docker image
+      shell: bash
+      run: |
+        sudo docker build --build-arg target_arch=${{ matrix.docker-image }} . -t alpine-cmake -f ./scripts/Dockerfile &&
+        sudo docker run -dt --rm --name alpine -v $PWD:/core -w="/core" alpine-cmake
+    - name: Install premake
+      shell: bash
+      run: ./scripts/install-premake5.sh
+    - name: Build
+      shell: bash
+      env:
+        PREMAKE_FLAGS: ${{ matrix.premake-flags }}
+      run: |
+        ./premake5 gmake2 $PREMAKE_FLAGS
+        sudo docker exec -t -w="/core" alpine make -Cbuild ocgcoreshared -j$(nproc) config=release LDFLAGS="-static -Wl,-Bstatic" &&
+        sudo chown -R $USER bin
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Linux-gcc-14:
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-24.04
+    env:
+      DEPLOY_BRANCH: travis-core-linux-gcc14
+      TRAVIS_OS_NAME: linux
+      CXX: g++-14
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Install premake
+      shell: bash
+      run: ./scripts/install-premake5.sh
+    - name: Build
+      shell: bash
+      run: ./scripts/build-premake5.sh
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Android:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ndk-version: [21.4.7075529, 16.1.4479499, 26.1.10909125]
+        include:
+          - ndk-version: 21.4.7075529
+            deploy-branch: travis-core-android
+          - ndk-version: 16.1.4479499
+            deploy-branch: travis-core-android-ndk-16
+          - ndk-version: 26.1.10909125
+            deploy-branch: travis-core-android-ndk-26
+    env:
+      DEPLOY_BRANCH: ${{ matrix.deploy-branch }}
+      NDK_VERSION: ${{ matrix.ndk-version }}
+      TRAVIS_OS_NAME: android
+      OS_NAME: linux
+    steps:
+    - name: Install old ncurses library for ndk 16
+      if: matrix.ndk-version == '16.1.4479499'
+      run: |
+        sudo add-apt-repository universe
+        sudo apt-get install libncurses5
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Setup Android NDK
+      shell: bash
+      run: ./scripts/setup-ndk.sh
+    - name: Build
+      shell: bash
+      run: ./scripts/build-android.sh
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Mac-os-cctools:
+    runs-on: ubuntu-22.04
+    env:
+      DEPLOY_BRANCH: travis-core-osx-cctools
+      TRAVIS_OS_NAME: linux
+      TARGET_OS: macosx
+      CC: /opt/cctools/bin/x86_64-macosx-clang
+      CXX: /opt/cctools/bin/x86_64-macosx-clang++
+      RANLIB: /opt/cctools/bin/x86_64-apple-darwin11-ranlib
+      AR: /opt/cctools/bin/arm-apple-darwin11-ar rcu
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Download cctools
+      run: |
+        cd /opt
+        wget https://github.com/edo9300/cctools-build/releases/download/preview/cctools.tar.xz
+        tar xf cctools.tar.xz
+        cd cctools/bin
+    - name: Install premake
+      shell: bash
+      run: ./scripts/install-premake5.sh
+    - name: Build
+      shell: bash
+      run: ./scripts/build-premake5.sh
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - uses: actions/upload-artifact@v4
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      with:
+        name: osx-cctools
+        path: ocgcore/libocgcore.dylib
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Mac-os-aarch64-cctools:
+    runs-on: ubuntu-22.04
+    env:
+      DEPLOY_BRANCH: travis-core-osx-aarch64-cctools
+      TRAVIS_OS_NAME: linux
+      TARGET_OS: macosx
+      CC: /opt/cctools/bin/arm64-macosx-clang
+      CXX: /opt/cctools/bin/arm64-macosx-clang++
+      RANLIB: /opt/cctools/bin/arm-apple-darwin11-ranlib
+      AR: /opt/cctools/bin/arm-apple-darwin11-ar rcu
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: ${{ github.head_ref }}
+        repository: ${{github.event.pull_request.head.repo.full_name}}
+        fetch-depth: 1
+        submodules: recursive
+    - name: Download cctools
+      run: |
+        cd /opt
+        wget https://github.com/edo9300/cctools-build/releases/download/preview/cctools.tar.xz
+        tar xf cctools.tar.xz
+        cd cctools/bin
+    - name: Install premake
+      shell: bash
+      run: ./scripts/install-premake5.sh
+    - name: Build
+      shell: bash
+      run: ./scripts/build-premake5.sh
+    - name: Predeploy
+      shell: bash
+      run: ./scripts/predeploy.sh
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - uses: actions/upload-artifact@v4
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      with:
+        name: osx-aarch64-cctools
+        path: ocgcore/libocgcore.dylib
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Mac-os-universal-cctools:
+    runs-on: ubuntu-22.04
+    env:
+      DEPLOY_BRANCH: travis-core-osx-universal-cctools
+    needs: [ Mac-os-cctools, Mac-os-aarch64-cctools ]
+    steps:
+    - uses: actions/checkout@v1
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      with:
+        fetch-depth: 1
+    - name: Download lipo binary
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      run: |
+        wget https://github.com/edo9300/cctools-build/releases/download/preview/lipo
+        chmod +x lipo
+    - name: Download osx artifacts
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      uses: actions/download-artifact@v4
+    - name: Merge binaries
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: |
+        ./lipo -create -output libocgcore.dylib ./osx-aarch64-cctools/libocgcore.dylib ./osx-cctools/libocgcore.dylib
+    - name: Move merged binary
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: |
+        mkdir -p $DEPLOY_DIR && mv libocgcore.dylib $DEPLOY_DIR
+    - name: Deploy
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: ./scripts/deploy.sh
+    - name: Delete artifacts
+      uses: geekyeggo/delete-artifact@v4
+      with:
+        name: |
+            osx-aarch64-cctools
+            osx-cctools
+    - name: Log Failure
+      uses: sarisia/actions-status-discord@v1
+      if: failure()
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] ${{ github.job }} failed on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0xff0000
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
+
+  Notify-success:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: travis-osx-universal
+      TRAVIS_OS_NAME: macosx
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    needs: [ Windows-visual-studio, Linux-musl, Android, Mac-os-universal-cctools ]
+    steps:
+    - name: Log Success
+      uses: sarisia/actions-status-discord@v1
+      with:
+        nodetail: true
+        description: |
+            [[${{ github.event.repository.name }}] Build EDOPro-core success on ${{ github.ref }}](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})
+        title: |
+                
+        color: 0x0f9826
+        webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+        username: Github
