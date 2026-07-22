@@ -81,7 +81,7 @@ void field::change_target(uint8_t chaincount, group* targets) {
 		return;
 	if(chaincount > core.current_chain.size() || chaincount < 1)
 		chaincount = static_cast<uint8_t>(core.current_chain.size());
-	group* ot = core.current_chain[chaincount - 1].target_cards;
+	auto ot = core.current_chain[chaincount - 1].target_cards;
 	if(ot) {
 		effect* te = core.current_chain[chaincount - 1].triggering_effect;
 		for(auto& pcard : ot->container)
@@ -119,26 +119,26 @@ void field::remove_overlay_card(uint32_t reason, group* pgroup, uint32_t rplayer
 	emplace_process<Processors::RemoveOverlay>(reason, pgroup, rplayer, self, oppo, min, max);
 }
 void field::xyz_overlay(card* target, card_set materials, bool send_materials_to_grave) {
-	group* ng = pduel->new_group(std::move(materials));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(materials));
+	ng->is_readonly = true;
 	emplace_process<Processors::XyzOverlay>(target, ng, send_materials_to_grave);
 }
 void field::xyz_overlay(card* target, card* material, bool send_materials_to_grave) {
 	xyz_overlay(target, card_set{ material }, send_materials_to_grave);
 }
 void field::get_control(card_set targets, effect* reason_effect, uint8_t chose_player, uint8_t playerid, uint16_t reset_phase, uint8_t reset_count, uint32_t zone) {
-	group* ng = pduel->new_group(std::move(targets));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(targets));
+	ng->is_readonly = true;
 	emplace_process<Processors::GetControl>(reason_effect, chose_player, ng, playerid, reset_phase, reset_count, zone);
 }
 void field::get_control(card* target, effect* reason_effect, uint8_t chose_player, uint8_t playerid, uint16_t reset_phase, uint8_t reset_count, uint32_t zone) {
 	get_control(card_set{ target }, reason_effect, chose_player, playerid, reset_phase, reset_count, zone);
 }
 void field::swap_control(effect* reason_effect, uint32_t reason_player, card_set targets1, card_set targets2, uint32_t reset_phase, uint32_t reset_count) {
-	group* ng1 = pduel->new_group(std::move(targets1));
-	ng1->is_readonly = TRUE;
-	group* ng2 = pduel->new_group(std::move(targets2));
-	ng2->is_readonly = TRUE;
+	auto ng1 = pduel->new_group(std::move(targets1));
+	ng1->is_readonly = true;
+	auto ng2 = pduel->new_group(std::move(targets2));
+	ng2->is_readonly = true;
 	emplace_process<Processors::SwapControl>(reason_effect, reason_player, ng1, ng2, reset_phase, reset_count);
 }
 void field::swap_control(effect* reason_effect, uint32_t reason_player, card* pcard1, card* pcard2, uint32_t reset_phase, uint32_t reset_count) {
@@ -206,8 +206,8 @@ void field::special_summon(card_set target, uint32_t sumtype, uint8_t sumplayer,
 		}
 		pcard->spsummon_param = (playerid << 24) + (nocheck << 16) + (nolimit << 8) + pos;
 	}
-	group* pgroup = pduel->new_group(std::move(target));
-	pgroup->is_readonly = TRUE;
+	auto pgroup = pduel->new_group(std::move(target));
+	pgroup->is_readonly = true;
 	emplace_process<Processors::SpSummon>(core.reason_effect, core.reason_player, pgroup, zone);
 }
 void field::special_summon_step(card* target, uint32_t sumtype, uint8_t sumplayer, uint8_t playerid, bool nocheck, bool nolimit, uint8_t positions, uint32_t zone) {
@@ -246,9 +246,9 @@ void field::special_summon_step(card* target, uint32_t sumtype, uint8_t sumplaye
 	emplace_process<Processors::SpSummonStep>(nullptr, target, zone);
 }
 void field::special_summon_complete(effect* reason_effect, uint8_t reason_player) {
-	group* ng = pduel->new_group();
-	ng->container.swap(core.special_summoning);
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(core.special_summoning));
+	core.special_summoning.clear();
+	ng->is_readonly = true;
 	emplace_process<Processors::SpSummon>(Step{ 1 }, reason_effect, reason_player, ng, 0);
 }
 void field::destroy(card_set targets, effect* reason_effect, uint32_t reason, uint8_t reason_player, uint8_t playerid, uint16_t destination, uint32_t sequence) {
@@ -279,8 +279,8 @@ void field::destroy(card_set targets, effect* reason_effect, uint32_t reason, ui
 		pcard->sendto_param.set(p, POS_FACEUP, destination, sequence);
 		++cit;
 	}
-	group* ng = pduel->new_group(std::move(targets));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(targets));
+	ng->is_readonly = true;
 	emplace_process<Processors::Destroy>(ng, reason_effect, reason, reason_player);
 }
 void field::destroy(card* target, effect* reason_effect, uint32_t reason, uint8_t reason_player, uint8_t playerid, uint16_t destination, uint32_t sequence) {
@@ -296,8 +296,8 @@ void field::release(card_set targets, effect* reason_effect, uint32_t reason, ui
 		pcard->current.reason_player = reason_player;
 		pcard->sendto_param.set(pcard->owner, POS_FACEUP, LOCATION_GRAVE);
 	}
-	group* ng = pduel->new_group(std::move(targets));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(targets));
+	ng->is_readonly = true;
 	emplace_process<Processors::Release>(ng, reason_effect, reason, reason_player);
 }
 void field::release(card* target, effect* reason_effect, uint32_t reason, uint8_t reason_player) {
@@ -330,8 +330,8 @@ void field::send_to(card_set targets, effect* reason_effect, uint32_t reason, ui
 			pos = pcard->current.position;
 		pcard->sendto_param.set(p, pos, destination, sequence);
 	}
-	group* ng = pduel->new_group(std::move(targets));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(targets));
+	ng->is_readonly = true;
 	emplace_process<Processors::SendTo>(ng, reason_effect, reason, reason_player);
 }
 void field::send_to(card* target, effect* reason_effect, uint32_t reason, uint8_t reason_player, uint8_t playerid, uint16_t destination, uint32_t sequence, uint8_t position, bool ignore) {
@@ -369,8 +369,8 @@ void field::move_to_field(card* target, uint8_t move_player, uint8_t playerid, u
 	emplace_process<Processors::MoveToField>(target, enable, ret, pzone, zone, rule, reason, confirm);
 }
 void field::change_position(card_set targets, effect* reason_effect, uint8_t reason_player, uint8_t au, uint8_t ad, uint8_t du, uint8_t dd, uint32_t flag, bool enable) {
-	group* ng = pduel->new_group(std::move(targets));
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(std::move(targets));
+	ng->is_readonly = true;
 	for(auto& pcard : ng->container) {
 		if(pcard->current.position == POS_FACEUP_ATTACK)
 			pcard->position_param = au;
@@ -385,8 +385,8 @@ void field::change_position(card_set targets, effect* reason_effect, uint8_t rea
 	emplace_process<Processors::ChangePos>(ng, reason_effect, reason_player, enable);
 }
 void field::change_position(card* target, effect* reason_effect, uint8_t reason_player, uint8_t npos, uint32_t flag, bool enable) {
-	group* ng = pduel->new_group(target);
-	ng->is_readonly = TRUE;
+	auto ng = pduel->new_group(target);
+	ng->is_readonly = true;
 	target->position_param = npos;
 	target->position_param |= flag;
 	emplace_process<Processors::ChangePos>(ng, reason_effect, reason_player, enable);
@@ -421,6 +421,10 @@ bool field::process(Processors::Draw& arg) {
 		uint32_t drawn = 0;
 		uint32_t public_count = 0;
 		if(!(reason & REASON_RULE) && !is_player_can_draw(playerid)) {
+			returns.set<int32_t>(0, 0);
+			return TRUE;
+		}
+		if(count == 0) {
 			returns.set<int32_t>(0, 0);
 			return TRUE;
 		}
@@ -1170,7 +1174,6 @@ bool field::process(Processors::GetControl& arg) {
 	case 7: {
 		core.operated_set = targets->container;
 		returns.set<int32_t>(0, static_cast<int32_t>(targets->container.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	}
@@ -1323,15 +1326,11 @@ bool field::process(Processors::SwapControl& arg) {
 	case 5: {
 		core.operated_set = targets1->container;
 		returns.set<int32_t>(0, 1);
-		pduel->delete_group(targets1);
-		pduel->delete_group(targets2);
 		return TRUE;
 	}
 	case 10: {
 		core.operated_set.clear();
 		returns.set<int32_t>(0, 0);
-		pduel->delete_group(targets1);
-		pduel->delete_group(targets2);
 		return TRUE;
 	}
 	}
@@ -1557,7 +1556,7 @@ bool field::process(Processors::SelfDestroy& arg) {
 			pcard->temp.reason_player = pcard->current.reason_player;
 			pcard->current.reason_effect = peffect;
 			pcard->current.reason_player = peffect->get_handler_player();
-			destroy(pcard, nullptr, REASON_EFFECT, PLAYER_SELFDES);
+			destroy(pcard, peffect, REASON_EFFECT, PLAYER_SELFDES);
 		}
 		core.self_destroy_set.erase(it);
 		arg.step = Processors::restart;
@@ -2160,8 +2159,11 @@ bool field::process(Processors::SummonRule& arg) {
 	case 9: {
 		uint8_t targetplayer = sumplayer;
 		uint8_t positions = POS_FACEUP_ATTACK;
-		if(is_flag(DUEL_NORMAL_SUMMON_FACEUP_DEF) || is_player_affected_by_effect(sumplayer, EFFECT_DEVINE_LIGHT))
+		if(is_flag(DUEL_NORMAL_SUMMON_FACEUP_DEF)
+		   || is_player_affected_by_effect(sumplayer, EFFECT_NORMAL_SUMMON_FACEUP_DEFENSE)
+		   || is_player_affected_by_effect(sumplayer, EFFECT_DEVINE_LIGHT)) {
 			positions = POS_FACEUP;
+		}
 		if(summon_procedure_effect && summon_procedure_effect->is_flag(EFFECT_FLAG_SPSUM_PARAM)) {
 			positions = (uint8_t)summon_procedure_effect->s_range & POS_FACEUP;
 			if(summon_procedure_effect->o_range)
@@ -2995,8 +2997,8 @@ bool field::process(Processors::SpSummonRule& arg) {
 	switch(arg.step) {
 	case 0: {
 		effect_set eset;
-		group* must_mats = core.must_use_mats;
-		group* materials = core.only_use_mats;
+		auto must_mats = core.must_use_mats;
+		auto materials = core.only_use_mats;
 		int32_t minc = core.forced_summon_minc;
 		int32_t maxc = core.forced_summon_maxc;
 		target->filter_spsummon_procedure(sumplayer, &eset, summon_type);
@@ -3073,14 +3075,8 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 4: {
-		if(core.must_use_mats) {
-			pduel->delete_group(core.must_use_mats);
-			core.must_use_mats = nullptr;
-		}
-		if(core.only_use_mats) {
-			pduel->delete_group(core.only_use_mats);
-			core.only_use_mats = nullptr;
-		}
+		core.must_use_mats = nullptr;
+		core.only_use_mats = nullptr;
 		auto proc = arg.summon_proc_effect;
 		uint8_t targetplayer = sumplayer;
 		uint8_t positions = POS_FACEUP;
@@ -3147,42 +3143,72 @@ bool field::process(Processors::SpSummonRule& arg) {
 		if(summon_type == SUMMON_TYPE_SYNCHRO)
 		{
 			auto message = pduel->new_message(MSG_SYNCHROSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 		}
 		else if(summon_type == SUMMON_TYPE_XYZ)
 		{
 			auto message = pduel->new_message(MSG_XYZSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 		}
 		else if(summon_type == SUMMON_TYPE_LINK)
 		{
 			auto message = pduel->new_message(MSG_LINKSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 		}
 		else if (summon_type == SUMMON_TYPE_FUSION)
 		{
 			auto message = pduel->new_message(MSG_FUSIONSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 		}
 		else if(summon_type == SUMMON_TYPE_RITUAL)
 		{
 			auto message = pduel->new_message(MSG_RITUALSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 		}
 		else if(summon_type == SUMMON_TYPE_PENDULUM)
 		{
 			auto message = pduel->new_message(MSG_PENDULUMSUMMONING);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
-		}else
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
+		}
+		else
 		{
 			auto message = pduel->new_message(MSG_SPSUMMONING);
-			message->write<uint32_t>(target->data.code);
+			if((target->current.position & POS_FACEDOWN) == 0) {
+				message->write<uint32_t>(target->data.code);
+			} 
+			else {
+				message->write<uint32_t>(0);
+			}
 			message->write(target->get_info_location());
 		}
 		return FALSE;
@@ -3258,7 +3284,33 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 16: {
-		pduel->new_message(MSG_SPSUMMONED);
+		if(summon_type == SUMMON_TYPE_SYNCHRO)
+		{
+			auto message = pduel->new_message(MSG_SYNCHROSUMMONED);
+		}
+		else if(summon_type == SUMMON_TYPE_XYZ)
+		{
+			auto message = pduel->new_message(MSG_XYZSUMMONED);
+		}
+		else if(summon_type == SUMMON_TYPE_LINK)
+		{
+			auto message = pduel->new_message(MSG_LINKSUMMONED);
+		}
+		else if (summon_type == SUMMON_TYPE_FUSION)
+		{
+			auto message = pduel->new_message(MSG_FUSIONSUMMONED);
+		}
+		else if(summon_type == SUMMON_TYPE_RITUAL)
+		{
+			auto message = pduel->new_message(MSG_RITUALSUMMONED);
+		}
+		else if(summon_type == SUMMON_TYPE_PENDULUM)
+		{
+			auto message = pduel->new_message(MSG_PENDULUMSUMMONED);
+		}else
+		{
+			auto message = pduel->new_message(MSG_SPSUMMONED);
+		}
 		adjust_instant();
 		auto proc = arg.summon_proc_effect;
 		int32_t matreason = REASON_SPSUMMON;
@@ -3309,7 +3361,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 21: {
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		for(auto cit = pgroup->container.begin(); cit != pgroup->container.end(); ) {
 			card* pcard = *cit++;
 			if(!(pcard->data.type & TYPE_MONSTER)
@@ -3331,7 +3383,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 22: {
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		if(pgroup->container.size() == 0)
 			return TRUE;
 		core.phase_action = true;
@@ -3340,7 +3392,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 	}
 	case 23: {
 		auto proc = arg.summon_proc_effect;
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		card* pcard = *pgroup->it;
 		pcard->enable_field_effect(false);
 		pcard->current.reason = REASON_SPSUMMON;
@@ -3393,48 +3445,76 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 24: {
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		card* pcard = *pgroup->it++;
 		if(summon_type == SUMMON_TYPE_SYNCHRO)
 		{
 			auto message = pduel->new_message(MSG_SYNCHROSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		else if(summon_type == SUMMON_TYPE_XYZ)
 		{
 			auto message = pduel->new_message(MSG_XYZSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		else if(summon_type == SUMMON_TYPE_LINK)
 		{
 			auto message = pduel->new_message(MSG_LINKSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		else if (summon_type == SUMMON_TYPE_FUSION)
 		{
 			auto message = pduel->new_message(MSG_FUSIONSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		else if(summon_type == SUMMON_TYPE_RITUAL)
 		{
 			auto message = pduel->new_message(MSG_RITUALSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		else if(summon_type == SUMMON_TYPE_PENDULUM)
 		{
 			auto message = pduel->new_message(MSG_PENDULUMSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}else
 		{
 			auto message = pduel->new_message(MSG_SPSUMMONING);
+		if((pcard->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(pcard->data.code);
-			message->write(pcard->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(pcard->get_info_location());
 		}
 		set_control(pcard, pcard->current.controler, 0, 0);
 		pcard->set_status(STATUS_SPSUMMON_STEP, TRUE);
@@ -3443,7 +3523,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 25: {
-		group* pgroup = arg.cards_to_summon_g; 
+		auto pgroup = arg.cards_to_summon_g;
 		if(is_flag(DUEL_CANNOT_SUMMON_OATH_OLD)) {
 			set_spsummon_counter(sumplayer);
 		}
@@ -3478,7 +3558,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 26: {
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		card_set cset;
 		for(auto cit = pgroup->container.begin(); cit != pgroup->container.end(); ) {
 			card* pcard = *cit++;
@@ -3508,7 +3588,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 27: {
-		group* pgroup = arg.cards_to_summon_g;
+		auto pgroup = arg.cards_to_summon_g;
 		release_oath_relation(arg.summon_proc_effect);
 		for(const auto& peffect : arg.spsummon_cost_effects)
 			release_oath_relation(peffect);
@@ -3522,48 +3602,33 @@ bool field::process(Processors::SpSummonRule& arg) {
 		return FALSE;
 	}
 	case 28: {
-		group* pgroup = arg.cards_to_summon_g;
-		auto proc = arg.summon_proc_effect;
-		if(proc->value == SUMMON_TYPE_SYNCHRO)
+		auto pgroup = arg.cards_to_summon_g;
+		if(summon_type == SUMMON_TYPE_SYNCHRO)
 		{
 			auto message = pduel->new_message(MSG_SYNCHROSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
-		else if(proc->value == SUMMON_TYPE_XYZ)
+		else if(summon_type == SUMMON_TYPE_XYZ)
 		{
 			auto message = pduel->new_message(MSG_XYZSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
-		else if(proc->value == SUMMON_TYPE_LINK)
+		else if(summon_type == SUMMON_TYPE_LINK)
 		{
 			auto message = pduel->new_message(MSG_LINKSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
-		else if (proc->value == SUMMON_TYPE_FUSION)
+		else if (summon_type == SUMMON_TYPE_FUSION)
 		{
 			auto message = pduel->new_message(MSG_FUSIONSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
-		else if(proc->value == SUMMON_TYPE_RITUAL)
+		else if(summon_type == SUMMON_TYPE_RITUAL)
 		{
 			auto message = pduel->new_message(MSG_RITUALSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
-		else if(proc->value == SUMMON_TYPE_PENDULUM)
+		else if(summon_type == SUMMON_TYPE_PENDULUM)
 		{
 			auto message = pduel->new_message(MSG_PENDULUMSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}else
 		{
 			auto message = pduel->new_message(MSG_SPSUMMONED);
-			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
 		}
 		if(!is_flag(DUEL_CANNOT_SUMMON_OATH_OLD)) {
 			set_spsummon_counter(sumplayer);
@@ -3739,43 +3804,71 @@ bool field::process(Processors::SpSummonStep& arg) {
 		if(summontype == SUMMON_TYPE_SYNCHRO)
 		{
 			auto message = pduel->new_message(MSG_SYNCHROSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		else if(summontype == SUMMON_TYPE_XYZ)
 		{
 			auto message = pduel->new_message(MSG_XYZSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		else if(summontype == SUMMON_TYPE_LINK)
 		{
 			auto message = pduel->new_message(MSG_LINKSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		else if (summontype == SUMMON_TYPE_FUSION)
 		{
 			auto message = pduel->new_message(MSG_FUSIONSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		else if(summontype == SUMMON_TYPE_RITUAL)
 		{
 			auto message = pduel->new_message(MSG_RITUALSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		else if(summontype == SUMMON_TYPE_PENDULUM)
 		{
 			auto message = pduel->new_message(MSG_PENDULUMSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}else
 		{
 			auto message = pduel->new_message(MSG_SPSUMMONING);
+		if((target->current.position & POS_FACEDOWN) == 0) {
 			message->write<uint32_t>(target->data.code);
-			message->write(target->get_info_location());
+		} else {
+			message->write<uint32_t>(0);
+		}
+		message->write(target->get_info_location());
 		}
 		return FALSE;
 	}
@@ -3837,7 +3930,6 @@ bool field::process(Processors::SpSummon& arg) {
 		if(targets->container.size() == 0) {
 			returns.set<int32_t>(0, 0);
 			core.operated_set.clear();
-			pduel->delete_group(targets);
 			return TRUE;
 		}
 		bool tp = false, ntp = false;
@@ -3871,39 +3963,27 @@ bool field::process(Processors::SpSummon& arg) {
 		for(auto& pcard : targets->container) {
 			int32_t summontype = pcard->summon.type & 0xff000000;
 			if(summontype == SUMMON_TYPE_SYNCHRO) {
-				auto message = pduel->new_message(MSG_SYNCHROSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_SYNCHROSUMMONED);
 			} else if(summontype == SUMMON_TYPE_XYZ) {
-				auto message = pduel->new_message(MSG_XYZSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_XYZSUMMONED);
 			} else if(summontype == SUMMON_TYPE_LINK) {
-				auto message = pduel->new_message(MSG_LINKSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_LINKSUMMONED);
 			} else if(summontype == SUMMON_TYPE_FUSION) {
-				auto message = pduel->new_message(MSG_FUSIONSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_FUSIONSUMMONED);
 			} else if(summontype == SUMMON_TYPE_RITUAL) {
-				auto message = pduel->new_message(MSG_RITUALSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_RITUALSUMMONED);
 			} else if(summontype == SUMMON_TYPE_PENDULUM) {
-				auto message = pduel->new_message(MSG_PENDULUMSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_PENDULUMSUMMONED);
 			} else {
-				auto message = pduel->new_message(MSG_SPSUMMONING);
-				message->write<uint32_t>(pcard->data.code);
-				message->write(pcard->get_info_location());
+				auto message = pduel->new_message(MSG_SPSUMMONED);
 			}
+		for(auto& pcard : targets->container) {
 			if(!is_flag(DUEL_CANNOT_SUMMON_OATH_OLD)) {
 				check_card_counter(pcard, ACTIVITY_SPSUMMON, pcard->summon.player);
 			}
 			if(!(pcard->current.position & POS_FACEDOWN))
 				raise_single_event(pcard, nullptr, EVENT_SPSUMMON_SUCCESS, pcard->current.reason_effect, 0, pcard->current.reason_player, pcard->summon.player, 0);
+			int32_t summontype = pcard->summon.type & 0xff000000;
 			if(summontype && pcard->material_cards.size() && !pcard->is_status(STATUS_FUTURE_FUSION)) {
 				int32_t matreason = 0;
 				if(summontype == SUMMON_TYPE_FUSION)
@@ -3933,7 +4013,6 @@ bool field::process(Processors::SpSummon& arg) {
 		core.operated_set.clear();
 		core.operated_set = targets->container;
 		returns.set<int32_t>(0, static_cast<int32_t>(targets->container.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	}
@@ -4120,7 +4199,6 @@ bool field::process(Processors::Destroy& arg) {
 		if(!targets->container.size()) {
 			returns.set<int32_t>(0, 0);
 			core.operated_set.clear();
-			pduel->delete_group(targets);
 			return TRUE;
 		}
 		card_vector cv(targets->container.begin(), targets->container.end());
@@ -4145,8 +4223,8 @@ bool field::process(Processors::Destroy& arg) {
 		return FALSE;
 	}
 	case 4: {
-		group* sendtargets = pduel->new_group(targets->container);
-		sendtargets->is_readonly = TRUE;
+		auto sendtargets = pduel->new_group(targets->container);
+		sendtargets->is_readonly = true;
 		for(auto& pcard : sendtargets->container) {
 			pcard->set_status(STATUS_DESTROY_CONFIRMED, FALSE);
 			uint32_t dest = pcard->sendto_param.location;
@@ -4172,7 +4250,6 @@ bool field::process(Processors::Destroy& arg) {
 				++cit;
 		}
 		returns.set<int32_t>(0, static_cast<int32_t>(core.operated_set.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	case 10: {
@@ -4304,7 +4381,7 @@ bool field::process(Processors::Destroy& arg) {
 bool field::process(Processors::ReleaseReplace& arg) {
 	auto targets = arg.targets;
 	auto target = arg.target;
-	if(!(target->current.location & (LOCATION_ONFIELD | LOCATION_HAND))) {
+	if(target->current.location & (LOCATION_GRAVE | LOCATION_REMOVED)) {
 		target->current.reason = target->temp.reason;
 		target->current.reason_effect = target->temp.reason_effect;
 		target->current.reason_player = target->temp.reason_player;
@@ -4358,14 +4435,13 @@ bool field::process(Processors::Release& arg) {
 		if(!targets->container.size()) {
 			returns.set<int32_t>(0, 0);
 			core.operated_set.clear();
-			pduel->delete_group(targets);
 			return TRUE;
 		}
 		card_vector cv(targets->container.begin(), targets->container.end());
 		if(cv.size() > 1)
 			std::sort(cv.begin(), cv.end(), card::card_operation_sort);
 		for (auto& pcard : cv) {
-			if(!(pcard->current.location & (LOCATION_ONFIELD | LOCATION_HAND))) {
+			if(pcard->current.location & (LOCATION_GRAVE | LOCATION_REMOVED)) {
 				pcard->current.reason = pcard->temp.reason;
 				pcard->current.reason_effect = pcard->temp.reason_effect;
 				pcard->current.reason_player = pcard->temp.reason_player;
@@ -4384,8 +4460,8 @@ bool field::process(Processors::Release& arg) {
 			message->write<uint8_t>(0);
 			message->write<uint64_t>(peffect->get_handler()->data.code);
 		}
-		group* sendtargets = pduel->new_group(targets->container);
-		sendtargets->is_readonly = TRUE;
+		auto sendtargets = pduel->new_group(targets->container);
+		sendtargets->is_readonly = true;
 		operation_replace(EFFECT_SEND_REPLACE, 5, sendtargets);
 		emplace_process<Processors::SendTo>(Step{ 1 }, sendtargets, reason_effect, reason | REASON_RELEASE, reason_player);
 		return FALSE;
@@ -4397,7 +4473,6 @@ bool field::process(Processors::Release& arg) {
 		core.operated_set.clear();
 		core.operated_set = targets->container;
 		returns.set<int32_t>(0, static_cast<int32_t>(targets->container.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	}
@@ -4443,7 +4518,7 @@ bool field::process(Processors::SendTo& arg) {
 					|| (dest == LOCATION_HAND && !pcard->is_capable_send_to_hand(core.reason_player))
 					|| (dest == LOCATION_DECK && !pcard->is_capable_send_to_deck(core.reason_player))
 					|| (dest == LOCATION_REMOVED && !pcard->is_removeable(core.reason_player, pcard->sendto_param.position, reason))
-					|| (dest == LOCATION_GRAVE && !pcard->is_capable_send_to_grave(core.reason_player))
+					|| (dest == LOCATION_GRAVE && !pcard->is_capable_send_to_grave(core.reason_player, reason))
 					|| (dest == LOCATION_EXTRA && !pcard->is_capable_send_to_extra(core.reason_player)))) {
 				pcard->current.reason = pcard->temp.reason;
 				pcard->current.reason_player = pcard->temp.reason_player;
@@ -4467,7 +4542,6 @@ bool field::process(Processors::SendTo& arg) {
 		if(!targets->container.size()) {
 			returns.set<int32_t>(0, 0);
 			core.operated_set.clear();
-			pduel->delete_group(targets);
 			return TRUE;
 		}
 		card_set leave_p, destroying;
@@ -4572,8 +4646,8 @@ bool field::process(Processors::SendTo& arg) {
 	case 4: {
 		arg.extra_args = std::make_unique<Processors::SendTo::exargs>();
 		auto& param = arg.extra_args;
-		param->show_decktop[0] = false;
-		param->show_decktop[1] = false;
+		param->check_decktop_visibility[0] = false;
+		param->check_decktop_visibility[1] = false;
 		param->cv.assign(targets->container.begin(), targets->container.end());
 		if(param->cv.size() > 1)
 			std::sort(param->cv.begin(), param->cv.end(), card::card_operation_sort);
@@ -4690,8 +4764,8 @@ bool field::process(Processors::SendTo& arg) {
 			message->write(pcard->get_info_location());
 			message->write<uint32_t>(pcard->current.reason);
 		}
-		if((core.deck_reversed && pcard->current.location == LOCATION_DECK) || (pcard->current.position == POS_FACEUP_DEFENSE))
-			param->show_decktop[control_player] = true;
+		if(pcard->current.location == LOCATION_DECK && (core.deck_reversed || (pcard->current.position == POS_FACEUP_DEFENSE)))
+			param->check_decktop_visibility[control_player] = true;
 		pcard->set_status(STATUS_LEAVE_CONFIRMED, FALSE);
 		if(pcard->status & (STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED)) {
 			pcard->set_status(STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED, FALSE);
@@ -4748,7 +4822,7 @@ bool field::process(Processors::SendTo& arg) {
 			param->leave_field.insert(pcard);
 		}
 		if(param->predirect->operation) {
-			tevent e;
+			tevent e{};
 			e.event_cards = targets;
 			e.event_player = pcard->current.controler;
 			e.event_value = 0;
@@ -4765,22 +4839,23 @@ bool field::process(Processors::SendTo& arg) {
 	case 9: {
 		auto& param = arg.extra_args;
 		if(core.global_flag & GLOBALFLAG_DECK_REVERSE_CHECK) {
-			if(param->show_decktop[0]) {
-				card* ptop = *player[0].list_main.rbegin();
+			auto check_decktop = [&](uint8_t playerid) {
+				if(!param->check_decktop_visibility[playerid])
+					return;
+				const auto& deck = player[playerid].list_main;
+				if(deck.empty())
+					return;
+				auto* ptop = deck.back();
+				if(!core.deck_reversed && ptop->current.position != POS_FACEUP_DEFENSE)
+					return;
 				auto message = pduel->new_message(MSG_DECK_TOP);
-				message->write<uint8_t>(0);
+				message->write<uint8_t>(playerid);
 				message->write<uint32_t>(0);
 				message->write<uint32_t>(ptop->data.code);
 				message->write<uint32_t>(ptop->current.position);
-			}
-			if(param->show_decktop[1]) {
-				card* ptop = *player[1].list_main.rbegin();
-				auto message = pduel->new_message(MSG_DECK_TOP);
-				message->write<uint8_t>(1);
-				message->write<uint32_t>(0);
-				message->write<uint32_t>(ptop->data.code);
-				message->write<uint32_t>(ptop->current.position);
-			}
+			};
+			check_decktop(0);
+			check_decktop(1);
 		}
 		for(auto& pcard : targets->container) {
 			if(!(pcard->data.type & TYPE_TOKEN))
@@ -4923,7 +4998,6 @@ bool field::process(Processors::SendTo& arg) {
 		core.operated_set.clear();
 		core.operated_set = targets->container;
 		returns.set<int32_t>(0, static_cast<int32_t>(targets->container.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	}
@@ -5540,7 +5614,6 @@ bool field::process(Processors::ChangePos& arg) {
 		core.operated_set.clear();
 		core.operated_set = targets->container;
 		returns.set<int32_t>(0, static_cast<int32_t>(targets->container.size()));
-		pduel->delete_group(targets);
 		return TRUE;
 	}
 	}
@@ -5606,12 +5679,6 @@ bool field::process(Processors::OperationReplace& arg) {
 		return FALSE;
 	}
 	case 3: {
-		if(core.continuous_chain.back().target_cards)
-			pduel->delete_group(core.continuous_chain.back().target_cards);
-		for(auto& oit : core.continuous_chain.back().opinfos) {
-			if(oit.second.op_cards)
-				pduel->delete_group(oit.second.op_cards);
-		}
 		core.continuous_chain.pop_back();
 		core.solving_event.pop_front();
 		return TRUE;
@@ -5672,12 +5739,6 @@ bool field::process(Processors::OperationReplace& arg) {
 		return FALSE;
 	}
 	case 8: {
-		if(core.continuous_chain.back().target_cards)
-			pduel->delete_group(core.continuous_chain.back().target_cards);
-		for(auto& oit : core.continuous_chain.back().opinfos) {
-			if(oit.second.op_cards)
-				pduel->delete_group(oit.second.op_cards);
-		}
 		core.continuous_chain.pop_back();
 		core.solving_event.pop_front();
 		return TRUE;
@@ -5786,12 +5847,6 @@ bool field::process(Processors::OperationReplace& arg) {
 		return FALSE;
 	}
 	case 16: {
-		if(core.continuous_chain.back().target_cards)
-			pduel->delete_group(core.continuous_chain.back().target_cards);
-		for(auto& oit : core.continuous_chain.back().opinfos) {
-			if(oit.second.op_cards)
-				pduel->delete_group(oit.second.op_cards);
-		}
 		core.continuous_chain.pop_back();
 		arg.step = 14;
 		return FALSE;
@@ -6216,6 +6271,7 @@ bool field::process(Processors::TossCoin& arg) {
 			++eit;
 			auto handler_player = peffect->get_handler_player();
 			if(peffect->is_activateable(handler_player, e)) {
+				core.coin_results.resize(count);
 				solve_continuous(handler_player, peffect, e);
 				return TRUE;
 			}
@@ -6292,6 +6348,7 @@ bool field::process(Processors::TossDice& arg) {
 			++eit;
 			auto handler_player = peffect->get_handler_player();
 			if(peffect->is_activateable(handler_player, e)) {
+				core.dice_results.resize(count1 + count2);
 				solve_continuous(handler_player, peffect, e);
 				return TRUE;
 			}

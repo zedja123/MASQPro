@@ -146,11 +146,6 @@ if _OPTIONS["sound"] then
 	end
 end
 
-if _OPTIONS["discord"] then
-    print("Discord App ID: " .. _OPTIONS["discord"])
-    defines { 'DISCORD_APP_ID="' .. _OPTIONS["discord"] .. '"' }
-end
-
 local _includedirs=includedirs
 if _ACTION=="xcode4" then
 	_includedirs=sysincludedirs
@@ -170,6 +165,7 @@ workspace "ygo"
 	filter { "action:vs*" }
 		disablewarnings "4100" --'identifier' : unreferenced formal parameter
 		disablewarnings "4244" --conversion from 'T1' to 'T2'. Possible loss of data
+		toolset "msc-v143"
 	filter { "action:not vs*" }
 		disablewarnings { "unknown-warning-option", "unused-parameter", "unknown-pragmas", "ignored-qualifiers", "missing-field-initializers", "implicit-const-int-float-conversion", "missing-braces", "invalid-utf8" }
 	filter { "action:not vs*", "files:**.cpp" }

@@ -159,13 +159,13 @@ local ygopro_config=function(static_core)
 		if _OPTIONS["discord"] and not os.istarget("ios") then
 			links "discord-rpc"
 		end
-		links { "sqlite3", "event", "event_pthreads", "dl", "git2", "ssh2" }
+		links { "sqlite3", "event", "event_pthreads", "dl", "git2", "libssh2" }
 
-	filter { "system:windows", "action: vs*" }
+	filter { "system:windows", "action:vs*" }
 		if _OPTIONS["discord"] then
 			links "discord-rpc"
 		end
-		links { "sqlite3", "event", "git2", "ssh2" }
+		links { "sqlite3", "event", "git2", "libssh2", "bcrypt", "avrt" }
 
 	filter "system:macosx or ios"
 		links { "ssl", "crypto" }
