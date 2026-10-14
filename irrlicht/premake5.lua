@@ -4,6 +4,8 @@ project "Irrlicht"
 	links "imm32"
 	dofile("defines.lua")
 	exceptionhandling "Off"
+	-- Irrlicht's 1.9-custom branch uses C++17 since 2026-09; MSVC defaults to C++14.
+	cppdialect "C++17"
 	rtti "Off"
 	files { "**.cpp", "**.c", "**.cxx", "**.hpp", "**.h" }
 	warnings "Default"
