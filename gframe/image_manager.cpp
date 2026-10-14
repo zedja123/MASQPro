@@ -79,6 +79,39 @@ irr::video::ITexture* ImageManager::loadTextureFixedSize(epro::path_stringview t
 		ret = GetTextureFromFile(epro::format(EPRO_TEXT("{}{}.jpg"), textures_path, texture_name).data(), width, height);
 	return ret;
 }
+// Draws the Genesys point badge (black outline, red ring, black centre) with
+// 4x4 supersampling, so no texture file has to be shipped.
+irr::video::ITexture* ImageManager::CreateGenesysBadge() {
+	static constexpr irr::u32 size = 128;
+	auto* image = driver->createImage(irr::video::ECF_A8R8G8B8, { size, size });
+	if(!image)
+		return nullptr;
+	static constexpr float center = size / 2.0f;
+	static constexpr float outer = 63.0f, ring_outer = 58.0f, ring_inner = 47.0f;
+	for(irr::u32 y = 0; y < size; ++y) {
+		for(irr::u32 x = 0; x < size; ++x) {
+			float a = 0, r = 0;
+			for(int sy = 0; sy < 4; ++sy) {
+				for(int sx = 0; sx < 4; ++sx) {
+					const float dx = x + (sx + 0.5f) / 4 - center;
+					const float dy = y + (sy + 0.5f) / 4 - center;
+					const float d = std::sqrt(dx * dx + dy * dy);
+					if(d > outer)
+						continue;
+					a += 1.0f;
+					if(d <= ring_outer && d > ring_inner)
+						r += 1.0f; // red ring; everything else inside is black
+				}
+			}
+			const auto alpha = static_cast<irr::u32>(a / 16 * 255);
+			const auto red = a > 0 ? static_cast<irr::u32>(r / a * 0xE0) : 0;
+			image->setPixel(x, y, irr::video::SColor(alpha, red, red / 14, red / 14));
+		}
+	}
+	auto* texture = driver->addTexture(EPRO_TEXT("genesys_badge"), image);
+	image->drop();
+	return texture;
+}
 irr::video::ITexture* ImageManager::loadTextureAnySize(epro::path_stringview texture_name) {
 	irr::video::ITexture* ret = driver->getTexture(epro::format(EPRO_TEXT("{}{}.png"), textures_path, texture_name).data());
 	if(ret == nullptr)
@@ -253,6 +286,10 @@ bool ImageManager::Initial() {
 
 	tCheckBox[2] = loadTextureAnySize(EPRO_TEXT("checkbox_64"sv));
 	ASSIGN_DEFAULT(tCheckBox[2]);
+
+	tGenesys = loadTextureAnySize(EPRO_TEXT("genesys"sv));
+	if(!tGenesys)
+		tGenesys = CreateGenesysBadge();
 
 
 	sizes[0].first = sizes[1].first = toPow2(driver, CARD_IMG_WIDTH * gGameConfig->dpi_scale);

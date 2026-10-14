@@ -121,7 +121,9 @@ struct DeckError {
 		UNOFFICIALCARD,
 		INVALIDSIZE,
 		TOOMANYLEGENDS,
-		TOOMANYSKILLS
+		TOOMANYSKILLS,
+		// 0xE and 0xF are reserved by Multirole (CARD_TCG_PRE, CARD_OCG_PRE).
+		GENESYSPOINTS = 0x10
 	};
 	DERR_TYPE type = DERR_TYPE::NONE;
 	struct {

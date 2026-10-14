@@ -1179,6 +1179,21 @@ void Game::WaitFrameSignal(int frame, std::unique_lock<epro::mutex>& _lck) {
 	signalFrame = (gGameConfig->quick_animation && frame >= 12) ? 12 * 1000 / 60 : frame * 1000 / 60;
 	frameSignal.Wait(_lck);
 }
+bool Game::IsGenesysActive() const {
+	return chkGenesys && chkGenesys->isChecked() && deckBuilder.filterList && deckBuilder.filterList->genesys;
+}
+// Red ring badge with the card's Genesys points in yellow, as in the official
+// point list.
+void Game::DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect) {
+	if(imageManager.tGenesys) {
+		const auto size = imageManager.tGenesys->getOriginalSize();
+		imageManager.draw2DImageFilterScaled(imageManager.tGenesys, rect, irr::core::recti(0, 0, size.Width, size.Height), cliprect, 0, true);
+	}
+	const auto text = epro::to_wstring(points);
+	// Three-digit values (100) need the smaller font to fit the black centre.
+	auto* font = (points >= 100 && genesysFont) ? genesysFont : adFont;
+	DrawShadowText(font, text, rect, irr::core::recti{ 1, 1, 1, 1 }, 0xffffd400, 0xff000000, true, true, cliprect);
+}
 void Game::DrawThumb(const CardDataC* cp, irr::core::vector2di pos, LFList* lflist, bool drag, const irr::core::recti* cliprect, bool load_image) {
 	auto code = cp->code;
 	auto flit = lflist->GetLimitationIterator(cp);
@@ -1194,13 +1209,20 @@ void Game::DrawThumb(const CardDataC* cp, irr::core::vector2di pos, LFList* lfli
 	irr::core::dimension2du size = img->getOriginalSize();
 	irr::core::recti dragloc = Resize(pos.X, pos.Y, pos.X + CARD_THUMB_WIDTH, pos.Y + CARD_THUMB_HEIGHT);
 	irr::core::recti limitloc = Resize(pos.X, pos.Y, pos.X + 20, pos.Y + 20);
+	irr::core::recti genesysloc = Resize(pos.X + CARD_THUMB_WIDTH - 22, pos.Y, pos.X + CARD_THUMB_WIDTH, pos.Y + 22);
 	irr::core::recti otloc = Resize(pos.X + 7, pos.Y + 50, pos.X + 37, pos.Y + 65);
 	if(drag) {
 		dragloc = irr::core::recti(pos.X, pos.Y, pos.X + Scale(CARD_THUMB_WIDTH * window_scale.X), pos.Y + Scale(CARD_THUMB_HEIGHT * window_scale.Y));
 		limitloc = irr::core::recti(pos.X, pos.Y, pos.X + Scale(20 * window_scale.X), pos.Y + Scale(20 * window_scale.Y));
+		genesysloc = irr::core::recti(pos.X + Scale((CARD_THUMB_WIDTH - 22) * window_scale.X), pos.Y,
+									  pos.X + Scale(CARD_THUMB_WIDTH * window_scale.X), pos.Y + Scale(22 * window_scale.Y));
 		otloc = irr::core::recti(pos.X + 7, pos.Y + 50 * window_scale.Y, pos.X + 37 * window_scale.X, pos.Y + 65 * window_scale.Y);
 	}
 	driver->draw2DImage(img, dragloc, irr::core::recti(0, 0, size.Width, size.Height), cliprect);
+	if(lflist->genesys && chkGenesys && chkGenesys->isChecked()) {
+		if(const auto points = lflist->GetPoints(cp); points > 0)
+			DrawGenesysBadge(points, genesysloc, cliprect);
+	}
 	if(!is_siding) {
 		switch(count) {
 			case -1:
@@ -1265,6 +1287,16 @@ void Game::DrawDeckBd() {
 
 		const auto main_deck_size_str = GetDeckSizeStr(current_deck.main, gdeckManager->pre_deck.main);
 		DrawShadowText(numFont, main_deck_size_str, Resize(379, 137, 439, 157), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+
+		// Genesys: total points of Main + Extra + Side against the list's cap.
+		if(IsGenesysActive()) {
+			const auto total = DeckManager::GetGenesysPoints(current_deck, *deckBuilder.filterList);
+			const auto cap = deckBuilder.filterList->genesys_cap;
+			const auto label = gDataManager->HasSysString(7102) ? gDataManager->GetSysString(7102) : L"Genesys"sv;
+			const auto genesys_str = epro::format(L"{} {}/{}", label, total, cap);
+			DrawShadowText(textFont, genesys_str, Resize(445, 136, 600, 156), Resize(1, 1, 1, 1),
+						   total > cap ? 0xffff4040 : 0xffffd400, 0xff000000, false, true);
+		}
 
 		const auto main_types_count_str = epro::format(L"{} {} {} {} {} {}",
 													  gDataManager->GetSysString(1312), deckBuilder.main_monster_count,

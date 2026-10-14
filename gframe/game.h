@@ -571,6 +571,10 @@ public:
 
 	uint8_t LocalPlayer(uint8_t player);
 	void UpdateDuelParam();
+	void ApplyGenesysHostRules();
+	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list.
+	int BotRuleFilter() const;
+	void LockGenesysZones(bool lock);
 	void UpdateExtraRules(bool set = false);
 	int GetMasterRule(uint64_t param, uint32_t forbidden = 0, int* truerule = 0);
 	void ResizePhaseButtons();
@@ -733,6 +737,10 @@ public:
 	irr::gui::CGUITTFont* numFont;
 	irr::gui::CGUITTFont* adFont;
 	irr::gui::CGUITTFont* lpcFont;
+	irr::gui::CGUITTFont* genesysFont{ nullptr };
+	irr::gui::IGUICheckBox* chkGenesys{ nullptr };
+	bool IsGenesysActive() const;
+	void DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect);
 	std::map<irr::gui::CGUIImageButton*, uint32_t> imageLoading;
 	//hint text
 	irr::gui::IGUIStaticText* stHintMsg;

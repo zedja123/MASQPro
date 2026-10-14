@@ -138,7 +138,11 @@ public:
 	A(tSettings)
 	A(tCheckBox[3])
 #undef A
+public:
+	// Genesys point badge: red ring with black outline and black centre.
+	irr::video::ITexture* tGenesys{ nullptr };
 private:
+	irr::video::ITexture* CreateGenesysBadge();
 	void ClearFutureObjects();
 	void RefreshCovers();
 	void LoadPic();

@@ -200,6 +200,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					options.duelFlags = DUEL_MODE_GOAT;
 					break;
 				}
+				case 8: {
+					options.duelFlags = DUEL_MODE_GENESYS;
+					break;
+				}
 				}
 #undef CHECK
 				options.duelFlags |= mainGame->chkHandTestNoShuffle->isChecked() ? DUEL_PSEUDO_SHUFFLE : 0;
@@ -603,6 +607,21 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 		}
 		case irr::gui::EGET_CHECKBOX_CHANGED: {
 			switch (id) {
+				case CHECKBOX_GENESYS_POINTS: {
+					// Switch to a Genesys list when the current one has no points.
+					if(mainGame->chkGenesys->isChecked() && !(filterList && filterList->genesys)) {
+						for(size_t i = 0; i < gdeckManager->_lfList.size(); ++i) {
+							if(!gdeckManager->_lfList[i].genesys)
+								continue;
+							mainGame->cbDBLFList->setSelected(static_cast<irr::s32>(i));
+							filterList = &gdeckManager->_lfList[i];
+							mainGame->ReloadCBLimit();
+							StartFilter(true);
+							break;
+						}
+					}
+					break;
+				}
 				case CHECKBOX_SHOW_ANIME: {
 					int prevLimit = mainGame->cbLimit->getSelected();
 					mainGame->ReloadCBLimit();
@@ -1309,6 +1328,10 @@ bool DeckBuilder::CheckCardProperties(const CardDataM& data) {
 				break;
 			case LIMITATION_FILTER_PRERELEASE_CUSTOM:
 				if(!(data._data.ot & SCOPE_PRERELEASE_CUSTOM))
+					return false;
+				break;
+			case LIMITATION_FILTER_GENESYS_POINTS:
+				if(filterList->GetPoints(&data._data) == 0)
 					return false;
 				break;
 			default:

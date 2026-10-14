@@ -439,6 +439,10 @@
 #define DUEL_MODE_MR3_FORB     TYPE_LINK
 #define DUEL_MODE_MR4_FORB     0
 #define DUEL_MODE_MR5_FORB     0
+/* MASQPro Genesys: current rules on the original field layout, without
+   Pendulum Zones or Extra Monster Zones. */
+#define DUEL_MODE_GENESYS      (DUEL_FSX_MMZONE | DUEL_TRAP_MONSTERS_NOT_USE_ZONE | DUEL_TRIGGER_ONLY_IN_LOCATION)
+#define DUEL_MODE_GENESYS_FORB (TYPE_PENDULUM | TYPE_LINK)
 
 
 #endif /* OCGAPI_CONSTANTS_H */

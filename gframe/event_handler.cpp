@@ -1989,7 +1989,7 @@ bool ClientField::OnCommonEvent(const irr::SEvent& event, bool& stopPropagation)
 			}
 			case CHECKBOX_FILTER_BOT: {
 				gGameConfig->filterBot = mainGame->gSettings.chkFilterBot->isChecked();
-				mainGame->gBot.Refresh(gGameConfig->filterBot * (mainGame->cbDuelRule->getSelected() + 1), gGameConfig->lastBot);
+				mainGame->gBot.Refresh(gGameConfig->filterBot * mainGame->BotRuleFilter(), gGameConfig->lastBot);
 				return true;
 			}
 			case CHECKBOX_FULLSCREEN: {
