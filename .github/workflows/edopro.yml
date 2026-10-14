@@ -57,7 +57,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -71,6 +71,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -130,7 +131,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - uses: actions/upload-artifact@v6
@@ -149,6 +150,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -191,6 +193,7 @@ jobs:
         ../cv2pdb.exe -lygoprodll.exe.debug ygoprodll.exe
         cp ygoprodll.pdb ../$DEPLOY_DIR
     - name: Deploy
+      if: ${{ env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Delete artifacts
@@ -208,6 +211,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -253,7 +257,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -267,6 +271,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -308,7 +313,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -322,6 +327,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -363,7 +369,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -377,6 +383,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -418,7 +425,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -432,6 +439,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -481,7 +489,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Log Failure
@@ -495,6 +503,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -556,7 +565,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - uses: actions/upload-artifact@v6
@@ -575,6 +584,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -610,7 +620,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Delete artifacts
@@ -630,6 +640,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -710,7 +721,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - uses: actions/upload-artifact@v6
@@ -729,6 +740,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -764,7 +776,7 @@ jobs:
       shell: bash
       run: ./travis/predeploy.sh
     - name: Deploy
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && env.DEPLOY_TOKEN != '' }}
       shell: bash
       run: ./travis/deploy.sh
     - name: Delete artifacts
@@ -784,6 +796,7 @@ jobs:
 
         color: 0xff0000
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
 
@@ -801,5 +814,6 @@ jobs:
 
         color: 0x0f9826
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
+        ack_no_webhook: true
         avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
         username: Github
