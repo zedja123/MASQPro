@@ -1,5 +1,10 @@
 name: Build EDOPro
 on: [push, pull_request]
+# The default GITHUB_TOKEN is read-only in this repository; the post-build
+# jobs need actions: write to delete their intermediate artifacts.
+permissions:
+  contents: read
+  actions: write
 env:
   COVERS_URL: ${{ secrets.COVERS_URL }}
   # Pinned: 'latest' changes under us (the September 2026 bundles dropped OpenAL,

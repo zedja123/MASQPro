@@ -52,14 +52,17 @@ if [[ "$TARGET_OS" == "windows" ]]; then
         rm irrKlang-32bit-1.6.0.zip
     fi
 
-    curl --retry 5 --connect-timeout 30 --location --remote-header-name --remote-name https://github.com/edo9300/irrlicht1-8-4/archive/1.9-custom.zip
+    # Pinned commit of the 1.9-custom branch: the branch head changes under us
+    # (it moved to C++17 on 2026-09-20). Bump deliberately after testing.
+    IRRLICHT_REV=7071bec37b1aa1a663f662dc1372f9e476aae009
+    curl --retry 5 --connect-timeout 30 --location --output irrlicht1-8-4-$IRRLICHT_REV.zip https://github.com/edo9300/irrlicht1-8-4/archive/$IRRLICHT_REV.zip
     echo Extracting irrlicht... this may take some time.
-    unzip -uo irrlicht1-8-4-1.9-custom.zip > /dev/null
-    mv irrlicht1-8-4-1.9-custom/include irrlicht/include
+    unzip -uo irrlicht1-8-4-$IRRLICHT_REV.zip > /dev/null
+    mv irrlicht1-8-4-$IRRLICHT_REV/include irrlicht/include
     # Technically, only code files need to be moved, and code files in lzma and aesGladman, but this is easier
-    mv irrlicht1-8-4-1.9-custom/source/Irrlicht irrlicht/src
-    rm -rf irrlicht1-8-4-1.9-custom
-    rm irrlicht1-8-4-1.9-custom.zip
+    mv irrlicht1-8-4-$IRRLICHT_REV/source/Irrlicht irrlicht/src
+    rm -rf irrlicht1-8-4-$IRRLICHT_REV
+    rm irrlicht1-8-4-$IRRLICHT_REV.zip
     # We will build against vcpkg-provided versions of these libs
     rm -rf irrlicht/src/bzip2 irrlicht/src/jpeglib irrlicht/src/libpng irrlicht/src/zlib
 fi
