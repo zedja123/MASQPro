@@ -21,7 +21,6 @@
 #include "game_config.h"
 #include "fmt.h"
 #include "curl.h"
-#include <filesystem>
 
 #define LOCKFILE EPRO_TEXT("./.edopro_lock")
 #define UPDATES_FOLDER EPRO_TEXT("./updates/{}")
@@ -337,10 +336,9 @@ static inline void DeleteOld() {
     ygo::Utils::FileDelete(epro::format(EPRO_TEXT("{}.old"), ygo::Utils::GetCorePath()));
 #endif
 
-    try {
-        std::filesystem::remove_all(EPRO_TEXT("./updates"));
-    } catch(...) {
-    }
+    // Utils::DeleteDirectory instead of std::filesystem: the latter is
+    // unavailable on the macOS deployment target (< 10.15).
+    ygo::Utils::DeleteDirectory(EPRO_TEXT("./updates/"));
 
     (void)0;
 }
