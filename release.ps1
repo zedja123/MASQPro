@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("major","minor","patch")]
+    [ValidateSet("major","minor","patch","build")]
     [string]$Type="patch"
 )
 
@@ -16,13 +16,68 @@ function Require-Command($name){
     }
 }
 
+# Writes UTF-8 without a byte-order mark (Windows PowerShell's "-Encoding UTF8" adds one).
+function Write-Utf8NoBom($path, $text){
+    [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Find-MSBuild {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    $msbuild = $null
+    if(Test-Path $vswhere){
+        $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+    }
+    if(-not $msbuild){
+        $candidates=@(
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
+        )
+        foreach($c in $candidates){ if(Test-Path $c){$msbuild=$c;break}}
+    }
+    if(-not $msbuild){ Write-Host "MSBuild.exe not found." -ForegroundColor Red; exit 1}
+    return $msbuild
+}
+
+function Invoke-Build {
+    $msbuild = Find-MSBuild
+    $solution = Join-Path $ProjectRoot "build\ygo.sln"
+
+    if (!(Test-Path $solution)) {
+        throw "Solution not found: $solution (run premake5 first)"
+    }
+    Write-Host "Solution    = [$solution]"
+    Write-Host "MSBuild     = [$msbuild]"
+    $arguments = @(
+        $solution
+        "/t:Rebuild"
+        "/m"
+        "/p:Configuration=Release"
+    )
+
+    & $msbuild @arguments
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSBuild failed (ExitCode=$LASTEXITCODE)"
+    }
+}
+
+if($Type -eq "build"){
+    Invoke-Build
+    Write-Host ""
+    Write-Host "Build finished." -ForegroundColor Green
+    exit 0
+}
+
 Require-Command git
 Require-Command gh
 
-$config = Get-ChildItem -Recurse -Filter config.h | Where-Object {$_.FullName -match "gframe"} | Select-Object -First 1
-if(!$config){ throw "config.h not found." }
+$config = Join-Path $ProjectRoot "gframe\config.h"
+if(!(Test-Path $config)){ throw "config.h not found." }
+$updateJson = Join-Path $ProjectRoot "updates\update.json"
 
-$content = Get-Content $config.FullName -Raw
+$content = Get-Content $config -Raw
 
 function Get-VersionValue($Macro){
 
@@ -47,6 +102,31 @@ switch($Type){
  "major" {$major++; $minor=0; $patch=0}
  "minor" {$minor++; $patch=0}
  "patch" {$patch++}
+}
+
+$version="$major.$minor.$patch"
+
+# Versions must only go up: the updater ignores anything not newer than the
+# installed version, so a reused or lower number never reaches players.
+if(Test-Path $updateJson){
+    $published = (Get-Content $updateJson -Raw | ConvertFrom-Json).version
+    if([version]$version -le [version]$published){
+        throw "Version $version is not newer than the published version $published (updates/update.json)."
+    }
+}
+
+# A tag is never reused or moved.
+git fetch --tags --quiet origin
+if(git tag --list $version){
+    throw "Tag $version already exists locally. Pick a new version."
+}
+if(git ls-remote --tags origin "refs/tags/$version"){
+    throw "Tag $version already exists on origin. Pick a new version."
+}
+
+# Only commit what the release itself changes.
+if(git status --porcelain --untracked-files=no){
+    throw "Working tree has uncommitted changes. Commit or stash them before releasing."
 }
 
 $match = [regex]::Match(
@@ -79,33 +159,6 @@ function Set-Define($text, $macro, $value){
 
 }
 
-$content = Set-Define $content "EDOPRO_VERSION_MAJOR" $major
-$content = Set-Define $content "EDOPRO_VERSION_MINOR" $minor
-$content = Set-Define $content "EDOPRO_VERSION_PATCH" $patch
-$content = Set-Define $content "EDOPRO_VERSION_CODENAME" "`"$codename`""
-
-Set-Content $config.FullName $content -Encoding UTF8
-
-
-# Locate MSBuild
-$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-$msbuild = $null
-if(Test-Path $vswhere){
-    $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
-}
-if(-not $msbuild){
-    $candidates=@(
-    "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-    "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-    "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-    "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
-    )
-    foreach($c in $candidates){ if(Test-Path $c){$msbuild=$c;break}}
-}
-if(-not $msbuild){ Write-Host "MSBuild.exe not found." -ForegroundColor Red; exit 1}
-
-$version="$major.$minor.$patch"
-
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Yellow
 Write-Host "        MASQPro Release"
@@ -117,36 +170,26 @@ Write-Host ""
 $confirm = Read-Host "Continue with this release? (Y/N)"
 if($confirm.ToUpper() -ne "Y"){
     Write-Host ""
-    Write-Host "Release cancelled." -ForegroundColor Red
+    Write-Host "Release cancelled. Nothing was changed." -ForegroundColor Red
     exit 0
 }
 Write-Host ""
 Write-Host "Starting release..." -ForegroundColor Green
 Write-Host ""
 
-$solution = Join-Path $ProjectRoot "build\ygo.sln"
+# config.h is only modified after confirmation.
+$content = Set-Define $content "EDOPRO_VERSION_MAJOR" $major
+$content = Set-Define $content "EDOPRO_VERSION_MINOR" $minor
+$content = Set-Define $content "EDOPRO_VERSION_PATCH" $patch
+$content = Set-Define $content "EDOPRO_VERSION_CODENAME" "`"$codename`""
 
-if (!(Test-Path $solution)) {
-    throw "Solution not found: $solution"
-}
-Write-Host "ProjectRoot = [$ProjectRoot]"
-Write-Host "Solution    = [$solution]"
-Write-Host "Exists      = $(Test-Path $solution)"
-Write-Host "MSBuild     = [$msbuild]"
-$arguments = @(
-    $solution
-    "/t:Rebuild"
-    "/m"
-    "/p:Configuration=Release"
-)
+Write-Utf8NoBom $config $content
 
-Write-Host "Arguments:"
-$arguments | ForEach-Object { Write-Host "  $_" }
-
-& $msbuild @arguments
-
-if ($LASTEXITCODE -ne 0) {
-    throw "MSBuild failed (ExitCode=$LASTEXITCODE)"
+try {
+    Invoke-Build
+} catch {
+    git checkout -- $config
+    throw
 }
 
 $releaseFiles=@("MASQPro.exe","ocgcore.dll")
@@ -178,9 +221,10 @@ $json=@{
 }
 
 if(!(Test-Path "$ProjectRoot\updates")){ New-Item -ItemType Directory "$ProjectRoot\updates" | Out-Null }
-$json | ConvertTo-Json -Depth 5 | Set-Content "$ProjectRoot\updates\update.json" -Encoding UTF8
+Write-Utf8NoBom $updateJson ($json | ConvertTo-Json -Depth 5)
 
-git add .
+# The zip is uploaded to the GitHub release, not committed.
+git add -- $config $updateJson
 git commit -m "Release $version ($codename)"
 git tag $version
 git push
@@ -190,11 +234,9 @@ $maxAttempts = 10
 
 for ($i = 0; $i -lt $maxAttempts; $i++) {
 
-    $tagFound = git ls-remote --tags origin | Select-String $version
-
-        if ($tagFound) {
-            break
-        }
+    if (git ls-remote --tags origin "refs/tags/$version") {
+        break
+    }
 
     Start-Sleep 2
 }
@@ -204,11 +246,6 @@ $title = "MASQPro $version `"$codename`""
 Write-Host ""
 Write-Host "Creating GitHub Release..."
 Write-Host ""
-
-Write-Host ""
-Write-Host "Creating GitHub Release..."
-Write-Host ""
-
 
 $output = & gh release create `
     $version `

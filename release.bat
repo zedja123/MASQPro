@@ -53,7 +53,7 @@ goto FINISH
 :BUILD
 echo.
 echo Building project...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0release.ps1" build
 goto FINISH
 
 :FINISH
