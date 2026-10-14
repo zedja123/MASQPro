@@ -3977,6 +3977,7 @@ bool field::process(Processors::SpSummon& arg) {
 			} else {
 				auto message = pduel->new_message(MSG_SPSUMMONED);
 			}
+		}
 		for(auto& pcard : targets->container) {
 			if(!is_flag(DUEL_CANNOT_SUMMON_OATH_OLD)) {
 				check_card_counter(pcard, ACTIVITY_SPSUMMON, pcard->summon.player);
