@@ -733,6 +733,10 @@ public:
 	irr::gui::CGUITTFont* numFont;
 	irr::gui::CGUITTFont* adFont;
 	irr::gui::CGUITTFont* lpcFont;
+	irr::gui::CGUITTFont* genesysFont{ nullptr };
+	irr::gui::IGUICheckBox* chkGenesys{ nullptr };
+	bool IsGenesysActive() const;
+	void DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect);
 	std::map<irr::gui::CGUIImageButton*, uint32_t> imageLoading;
 	//hint text
 	irr::gui::IGUIStaticText* stHintMsg;

@@ -90,6 +90,8 @@ Game::~Game() {
 		numFont->drop();
 	if(adFont)
 		adFont->drop();
+	if(genesysFont)
+		genesysFont->drop();
 	if(lpcFont)
 		lpcFont->drop();
 	if(filesystem)
@@ -169,6 +171,8 @@ void Game::Initialize() {
 	adFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
 	numfont.size = Scale(48);
 	lpcFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
+	numfont.size = Scale(10);
+	genesysFont = irr::gui::CGUITTFont::createTTFont(env, numfont, fallbackFonts);
 	if(!numFont || !adFont || !lpcFont)
 		throw std::runtime_error("Failed to load numbers font");
 	if(!ApplySkin(gGameConfig->skin, false, true)) {
@@ -550,6 +554,8 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(stBanlist, 1300);
 	cbDBLFList = AlignElementWithParent(AddComboBox(env, Scale(80, 5, 220, 30), wDeckEdit, COMBOBOX_DBLFLIST));
 	cbDBLFList->setMaxSelectionRows(10);
+	chkGenesys = AlignElementWithParent(env->addCheckBox(gGameConfig->genesysPoints, Scale(225, 7, 295, 28), wDeckEdit, CHECKBOX_GENESYS_POINTS,
+		gDataManager->HasSysString(7101) ? gDataManager->GetSysString(7101).data() : L"Genesys"));
 	stDeck = env->addStaticText(gDataManager->GetSysString(1301).data(), Scale(10, 39, 100, 59), false, false, wDeckEdit);
 	defaultStrings.emplace_back(stDeck, 1301);
 	cbDBDecks = AlignElementWithParent(AddComboBox(env, Scale(80, 35, 220, 60), wDeckEdit, COMBOBOX_DBDECKS));
@@ -2590,6 +2596,7 @@ void Game::SaveConfig() {
 	gGameConfig->chkIgnore2 = gSettings.chkIgnoreSpectators->isChecked();
 	gGameConfig->chkHideHintButton = gSettings.chkHideChainButtons->isChecked();
 	gGameConfig->chkAnime = chkAnime->isChecked();
+	gGameConfig->genesysPoints = chkGenesys->isChecked();
 #ifdef UPDATE_URL
 	gGameConfig->noClientUpdates = gSettings.chkUpdates->isChecked();
 #endif
