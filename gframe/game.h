@@ -571,6 +571,10 @@ public:
 
 	uint8_t LocalPlayer(uint8_t player);
 	void UpdateDuelParam();
+	void ApplyGenesysHostRules();
+	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list.
+	int BotRuleFilter() const;
+	void LockGenesysZones(bool lock);
 	void UpdateExtraRules(bool set = false);
 	int GetMasterRule(uint64_t param, uint32_t forbidden = 0, int* truerule = 0);
 	void ResizePhaseButtons();

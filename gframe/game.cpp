@@ -3129,7 +3129,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_SPEED: {
 		cbDuelRule->setSelected(5);
 		if(flag2 == DUEL_MODE_MR5_FORB) {
-			cbDuelRule->removeItem(8);
+			cbDuelRule->removeItem(9);
 			break;
 		}
 	}
@@ -3137,7 +3137,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_RUSH: {
 		cbDuelRule->setSelected(6);
 		if(flag2 == DUEL_MODE_MR5_FORB) {
-			cbDuelRule->removeItem(8);
+			cbDuelRule->removeItem(9);
 			break;
 		}
 	}
@@ -3145,7 +3145,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_GOAT: {
 		cbDuelRule->setSelected(7);
 		if(flag2 == DUEL_MODE_MR1_FORB) {
-			cbDuelRule->removeItem(8);
+			cbDuelRule->removeItem(9);
 			break;
 		}
 	}
@@ -3156,7 +3156,7 @@ void Game::UpdateDuelParam() {
 		case DUEL_MODE_MR##MR:{ \
 			cbDuelRule->setSelected(MR - 1); \
 			if (flag2 == DUEL_MODE_MR##MR##_FORB) { \
-				cbDuelRule->removeItem(8); break; } \
+				cbDuelRule->removeItem(9); break; } \
 			} \
 			[[fallthrough]];
 			CHECK(1)
@@ -3165,9 +3165,17 @@ void Game::UpdateDuelParam() {
 			CHECK(4)
 			CHECK(5)
 	#undef CHECK
+		case DUEL_MODE_GENESYS: {
+			cbDuelRule->setSelected(8);
+			if(flag2 == DUEL_MODE_GENESYS_FORB) {
+				cbDuelRule->removeItem(9);
+				break;
+			}
+		}
+		[[fallthrough]];
 		default: {
 			cbDuelRule->addItem(gDataManager->GetSysString(1630).data());
-			cbDuelRule->setSelected(8);
+			cbDuelRule->setSelected(9);
 			break;
 		}
 		}
@@ -3175,6 +3183,41 @@ void Game::UpdateDuelParam() {
 	}
 	duel_param = flag;
 	forbiddentypes = flag2;
+}
+// A Genesys banlist forces the Genesys rule: original field layout without
+// Pendulum Zones or Extra Monster Zones. The rule selector and those zone
+// options are locked while such a list is selected.
+void Game::ApplyGenesysHostRules() {
+	const auto sel = cbHostLFList->getSelected();
+	const auto* list = sel >= 0 ? gdeckManager->GetLFList(cbHostLFList->getItemData(sel)) : nullptr;
+	const bool genesys = list && list->genesys;
+	if(genesys && cbDuelRule->getSelected() != 8) {
+		cbDuelRule->setSelected(8);
+		irr::SEvent event{};
+		event.EventType = irr::EET_GUI_EVENT;
+		event.GUIEvent.Caller = cbDuelRule;
+		event.GUIEvent.Element = nullptr;
+		event.GUIEvent.EventType = irr::gui::EGET_COMBO_BOX_CHANGED;
+		menuHandler.OnEvent(event);
+	}
+	cbDuelRule->setEnabled(!genesys);
+	LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
+}
+int Game::BotRuleFilter() const {
+	const auto sel = cbDuelRule->getSelected();
+	return sel == 8 ? 5 : sel + 1;
+}
+void Game::LockGenesysZones(bool lock) {
+	// Custom rule checkboxes 3, 4 and 5: Pendulum Zones, separate Pendulum
+	// Zones and Extra Monster Zones.
+	chkCustomRules[3]->setEnabled(!lock);
+	chkCustomRules[5]->setEnabled(!lock);
+	chkCustomRules[4]->setEnabled(!lock && chkCustomRules[3]->isChecked());
+	if(lock) {
+		chkCustomRules[3]->setChecked(false);
+		chkCustomRules[4]->setChecked(false);
+		chkCustomRules[5]->setChecked(false);
+	}
 }
 void Game::UpdateExtraRules(bool set) {
 	for(auto i = 0u; i < sizeofarr(chkRules); i++)
@@ -3451,6 +3494,9 @@ void Game::ReloadCBLimit() {
 	cbLimit->addItem(gDataManager->GetSysString(1317).data(), DeckBuilder::LIMITATION_FILTER_LIMITED);
 	cbLimit->addItem(gDataManager->GetSysString(1318).data(), DeckBuilder::LIMITATION_FILTER_SEMI_LIMITED);
 	cbLimit->addItem(gDataManager->GetSysString(1320).data(), DeckBuilder::LIMITATION_FILTER_UNLIMITED);
+	if(deckBuilder.filterList && deckBuilder.filterList->genesys)
+		cbLimit->addItem(gDataManager->HasSysString(7104) ? gDataManager->GetSysString(7104).data() : L"Genesys points",
+						 DeckBuilder::LIMITATION_FILTER_GENESYS_POINTS);
 	if(!white) {
 		chkAnime->setEnabled(true);
 		cbLimit->addItem(gDataManager->GetSysString(1900).data(), DeckBuilder::LIMITATION_FILTER_OCG);
@@ -3515,6 +3561,7 @@ void Game::ReloadCBDuelRule(irr::gui::IGUIComboBox* cb) {
 	cb->addItem(gDataManager->GetSysString(1258).data());
 	cb->addItem(gDataManager->GetSysString(1259).data());
 	cb->addItem(gDataManager->GetSysString(1248).data());
+	cb->addItem(gDataManager->HasSysString(7103) ? gDataManager->GetSysString(7103).data() : L"Genesys");
 }
 void Game::ReloadCBRule() {
 	cbRule->clear();

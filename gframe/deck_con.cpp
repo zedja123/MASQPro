@@ -200,6 +200,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					options.duelFlags = DUEL_MODE_GOAT;
 					break;
 				}
+				case 8: {
+					options.duelFlags = DUEL_MODE_GENESYS;
+					break;
+				}
 				}
 #undef CHECK
 				options.duelFlags |= mainGame->chkHandTestNoShuffle->isChecked() ? DUEL_PSEUDO_SHUFFLE : 0;
@@ -1324,6 +1328,10 @@ bool DeckBuilder::CheckCardProperties(const CardDataM& data) {
 				break;
 			case LIMITATION_FILTER_PRERELEASE_CUSTOM:
 				if(!(data._data.ot & SCOPE_PRERELEASE_CUSTOM))
+					return false;
+				break;
+			case LIMITATION_FILTER_GENESYS_POINTS:
+				if(filterList->GetPoints(&data._data) == 0)
 					return false;
 				break;
 			default:

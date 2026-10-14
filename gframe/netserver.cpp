@@ -373,6 +373,12 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
 		}
 		if(hash == 1)
 			pkt.info.lflist = gdeckManager->_lfList[0].hash;
+		// Genesys lists force the Genesys field: no Pendulum Zones, no Extra
+		// Monster Zones, no Link or Pendulum Monsters.
+		if(const auto* lflist = gdeckManager->GetLFList(pkt.info.lflist); lflist && lflist->genesys) {
+			pkt.info.duel_flag_low &= ~static_cast<uint32_t>(DUEL_PZONE | DUEL_SEPARATE_PZONE | DUEL_EMZONE);
+			pkt.info.forbiddentypes |= DUEL_MODE_GENESYS_FORB;
+		}
 		duel_mode->host_info = pkt.info;
 		BufferIO::DecodeUTF16(pkt.name, duel_mode->name, 20);
 		BufferIO::DecodeUTF16(pkt.pass, duel_mode->pass, 20);

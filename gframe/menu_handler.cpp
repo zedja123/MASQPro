@@ -221,6 +221,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					mainGame->ebHostPort->setVisible(true);
 					mainGame->stHostNotes->setVisible(false);
 					mainGame->ebHostNotes->setVisible(false);
+					mainGame->ApplyGenesysHostRules();
 					mainGame->ShowElement(mainGame->wCreateHost);
 				}
 				break;
@@ -234,6 +235,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->ebHostPort->setVisible(false);
 				mainGame->stHostNotes->setVisible(true);
 				mainGame->ebHostNotes->setVisible(true);
+				mainGame->ApplyGenesysHostRules();
 				mainGame->ShowElement(mainGame->wCreateHost);
 				break;
 			}
@@ -259,7 +261,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					}
 					gGameConfig->gamename = mainGame->ebServerName->getText();
 					gGameConfig->serverport = mainGame->ebHostPort->getText();
-					mainGame->gBot.Refresh(gGameConfig->filterBot * (mainGame->cbDuelRule->getSelected() + 1), gGameConfig->lastBot);
+					mainGame->gBot.Refresh(gGameConfig->filterBot * mainGame->BotRuleFilter(), gGameConfig->lastBot);
 					if(!NetServer::StartServer(host_port))
 						break;
 					const auto ip = 0x100007F; //127.0.0.1 in network byte order
@@ -933,6 +935,11 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 						mainGame->forbiddentypes = DUEL_MODE_MR1_FORB;
 						break;
 					}
+					case 8:	{
+						mainGame->duel_param = DUEL_MODE_GENESYS;
+						mainGame->forbiddentypes = DUEL_MODE_GENESYS_FORB;
+						break;
+					}
 					}
 	#undef CHECK
 					mainGame->duel_param |= tcg;
@@ -1008,9 +1015,16 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					mainGame->ebStartHand->setText(L"5");
 					goto remove;
 				}
+				case 8:	{
+					mainGame->duel_param = DUEL_MODE_GENESYS;
+					setDeckSizes(ocg_deck_sizes);
+					mainGame->forbiddentypes = DUEL_MODE_GENESYS_FORB;
+					mainGame->ebStartHand->setText(L"5");
+					goto remove;
+				}
 				default: break;
 				remove:
-				combobox->removeItem(8);
+				combobox->removeItem(9);
 				mainGame->UpdateExtraRules();
 				}
 #undef CHECK
@@ -1033,6 +1047,11 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 				for(auto i = 0u; i < sizeofarr(mainGame->chkTypeLimit); ++i)
 					mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
+				mainGame->LockGenesysZones(combobox == mainGame->cbDuelRule && combobox->getSelected() == 8);
+				break;
+			}
+			case COMBOBOX_HOST_LFLIST: {
+				mainGame->ApplyGenesysHostRules();
 				break;
 			}
 			case COMBOBOX_BOT_DECK: {
