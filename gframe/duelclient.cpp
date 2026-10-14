@@ -540,6 +540,12 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
 				text = gDataManager->GetSysString(1427).data();
 				break;
 			}
+			case DeckError::GENESYSPOINTS: {
+				const auto fmt = gDataManager->HasSysString(7100) ? gDataManager->GetSysString(7100)
+					: L"Genesys: your deck uses %d points, but the limit is %d."sv;
+				text = epro::sprintf(fmt, curcount, mainmax);
+				break;
+			}
 			default: {
 				text = gDataManager->GetSysString(1406).data();
 				break;

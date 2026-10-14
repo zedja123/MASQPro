@@ -20,6 +20,11 @@ struct LFList {
 	std::wstring listName;
 	banlist_content_t content;
 	bool whitelist;
+	// Genesys format: a "$genesys <cap>" line turns the list into a point
+	// list. Card lines may carry a third number, "code count points".
+	bool genesys{ false };
+	uint32_t genesys_cap{ 0 };
+	std::unordered_map<uint32_t, uint32_t> points;
 	auto GetLimitationIterator(const CardDataC* pcard) const {
 		auto flit = content.find(pcard->code);
 		if(flit == content.end() && pcard->alias) {
@@ -27,6 +32,14 @@ struct LFList {
 				flit = content.find(pcard->alias);
 		}
 		return flit;
+	}
+	// Points follow alternate artworks only, not "always treated as" cards,
+	// which are different cards with their own point value.
+	uint32_t GetPoints(const CardDataC* pcard) const {
+		auto it = points.find(pcard->code);
+		if(it == points.end() && pcard->alias && pcard->IsInArtworkOffsetRange())
+			it = points.find(pcard->alias);
+		return it == points.end() ? 0 : it->second;
 	}
 };
 enum class DuelAllowedCards {
@@ -77,6 +90,7 @@ public:
 	static void RefreshDeck(Deck& deck);
 	static DeckError CheckDeckContent(const Deck& deck, LFList const* lflist, DuelAllowedCards allowedCards, uint32_t forbiddentypes, bool rituals_in_extra);
 	static DeckError CheckDeckSize(const Deck& deck, const DeckSizes& sizes);
+	static uint32_t GetGenesysPoints(const Deck& deck, const LFList& lflist);
 	static int TypeCount(const Deck::Vector& cards, uint32_t type);
 	static int CountLegends(const Deck::Vector& cards, uint32_t type);
 	static uint32_t LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);

@@ -32,8 +32,17 @@ void DeckManager::ClearDummies() {
 	}
 	dummy_entries.clear();
 }
+// Hash contributions of the Genesys data. They must stay identical to
+// Multirole's BanlistParser so that client and server agree on the list hash.
+static constexpr uint32_t GenesysCapSalt(uint32_t cap) {
+	return 0x47454E53U ^ (cap * 0x9E3779B1U);
+}
+static constexpr uint32_t GenesysPointsSalt(uint32_t code, uint32_t points) {
+	return ((code << 7) | (code >> 25)) ^ (points * 0x85EBCA77U);
+}
 bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
 	static constexpr auto key = "$whitelist"sv;
+	static constexpr auto genesys_key = "$genesys"sv;
 	FileStream infile{ path, FileStream::in };
 	if(infile.fail())
 		return false;
@@ -56,11 +65,30 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
 			lflist.content.clear();
 			lflist.hash = 0x7dfcee6a;
 			lflist.whitelist = false;
+			lflist.genesys = false;
+			lflist.genesys_cap = 0;
+			lflist.points.clear();
 			loaded = true;
 			continue;
 		}
 		if(str.rfind(key.data(), 0, key.size()) == 0) {
 			lflist.whitelist = true;
+			continue;
+		}
+		if(str.rfind(genesys_key.data(), 0, genesys_key.size()) == 0) {
+			if(!lflist.hash || lflist.genesys)
+				continue;
+			uint32_t cap = 100;
+			auto b = str.find_first_of("0123456789", genesys_key.size());
+			if(b != std::string::npos) {
+				try {
+					cap = static_cast<uint32_t>(std::stoul(str.substr(b)));
+				}
+				catch(...) {}
+			}
+			lflist.genesys = true;
+			lflist.genesys_cap = cap;
+			lflist.hash ^= GenesysCapSalt(cap);
 			continue;
 		}
 		if(!lflist.hash)
@@ -78,6 +106,17 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
 			auto count = static_cast<int32_t>(std::stol(str.substr(p, c)));
 			lflist.content[code] = count;
 			lflist.hash = lflist.hash ^ ((code << 18) | (code >> 14)) ^ ((code << (27 + count)) | (code >> (5 - count)));
+			// Optional third column: Genesys points.
+			if(c != std::string::npos) {
+				auto pb = str.find_first_not_of(" \t", p + c);
+				if(pb != std::string::npos && str[pb] >= '0' && str[pb] <= '9') {
+					auto points = static_cast<uint32_t>(std::stoul(str.substr(pb)));
+					if(points > 0) {
+						lflist.points[code] = points;
+						lflist.hash ^= GenesysPointsSalt(code, points);
+					}
+				}
+			}
 		}
 		catch(...){}
 	}
@@ -249,7 +288,39 @@ DeckError DeckManager::CheckDeckContent(const Deck& deck, LFList const* lflist, 
 		return { DeckError::NONE };
 	});
 	if (ret.type) return ret;
-	return CheckCards(deck.side, lflist, allowedCards, ccount);
+	ret = CheckCards(deck.side, lflist, allowedCards, ccount);
+	if (ret.type) return ret;
+	if(lflist->genesys) {
+		// Genesys: no Link or Pendulum Monsters, and the points of the Main,
+		// Extra and Side Deck combined must not exceed the cap.
+		const auto banned_type = [](const CardDataC* card) {
+			return (card->type & TYPE_MONSTER) && (card->type & (TYPE_LINK | TYPE_PENDULUM));
+		};
+		for(const auto* pile : { &deck.main, &deck.extra, &deck.side }) {
+			for(const auto* card : *pile) {
+				if(banned_type(card))
+					return ret.type = DeckError::FORBTYPE, ret;
+			}
+		}
+		const auto total = GetGenesysPoints(deck, *lflist);
+		if(total > lflist->genesys_cap) {
+			ret.type = DeckError::GENESYSPOINTS;
+			ret.count.current = total;
+			ret.count.minimum = 0;
+			ret.count.maximum = lflist->genesys_cap;
+			ret.code = 0;
+			return ret;
+		}
+	}
+	return ret;
+}
+uint32_t DeckManager::GetGenesysPoints(const Deck& deck, const LFList& lflist) {
+	uint32_t total = 0;
+	for(const auto* pile : { &deck.main, &deck.extra, &deck.side }) {
+		for(const auto* card : *pile)
+			total += lflist.GetPoints(card);
+	}
+	return total;
 }
 DeckError DeckManager::CheckDeckSize(const Deck& deck, const DeckSizes& sizes) {
 	DeckError ret{ DeckError::NONE };
