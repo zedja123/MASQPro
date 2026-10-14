@@ -1307,6 +1307,12 @@ void GenericDuel::AfterParsing(const CoreUtils::Packet& packet, [[maybe_unused]]
 	case MSG_DAMAGE_STEP_END:
 	case MSG_SUMMONED:
 	case MSG_SPSUMMONED:
+	case MSG_RITUALSUMMONED:
+	case MSG_FUSIONSUMMONED:
+	case MSG_SYNCHROSUMMONED:
+	case MSG_XYZSUMMONED:
+	case MSG_LINKSUMMONED:
+	case MSG_PENDULUMSUMMONED:
 	case MSG_FLIPSUMMONED:
 	case MSG_NEW_PHASE:
 	case MSG_CHAINED:
