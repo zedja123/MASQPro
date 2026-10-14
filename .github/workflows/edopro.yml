@@ -2,7 +2,9 @@ name: Build EDOPro
 on: [push, pull_request]
 env:
   COVERS_URL: ${{ secrets.COVERS_URL }}
-  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/latest/download
+  # Pinned: 'latest' changes under us (the September 2026 bundles dropped OpenAL,
+  # which broke the macOS build). Bump deliberately after testing.
+  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/download/20260628
   DEPLOY_DIR: deploy
   DEPLOY_REPO: ${{ secrets.DEPLOY_REPO }}
   DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
