@@ -402,6 +402,9 @@ void ClientField::UpdateCard(uint8_t controler, uint8_t location, uint32_t seque
 		if(mainGame->dInfo.compat_mode)
 			len = BufferIO::Read<uint32_t>(data);
 		pcard->UpdateInfo(CoreUtils::Query{ data, mainGame->dInfo.compat_mode, len, mainGame->dInfo.legacy_race_size });
+		// Domain: face-down for the core, shown face-up in the Deck Master Zone
+		if(pcard->location == LOCATION_DMZ)
+			pcard->position = POS_FACEUP_ATTACK;
 	}
 }
 void ClientField::UpdateFieldCard(uint8_t controler, uint8_t location, const uint8_t* data, uint32_t len) {
