@@ -20,8 +20,8 @@ from pathlib import Path
 TOOLS = Path(os.environ.get("EDOPRO_TOOLS",
                             "/home/user/zedja123/cardscripts/.claude/skills/edopro-card-scripting/tools"))
 sys.path.insert(0, str(TOOLS))
-from duelsim import DUEL_MODE_MR5, DUEL_PSEUDO_SHUFFLE, Duel, i32  # noqa: E402
-from scenario import (Act, Answer, Phase, Pick, Step, Summon, TestFailure, activatable, begin,  # noqa: E402
+from duelsim import DUEL_ATTACK_FIRST_TURN, DUEL_MODE_MR5, DUEL_PSEUDO_SHUFFLE, Duel, i32  # noqa: E402
+from scenario import (Act, Answer, Attack, Phase, Pick, Step, Summon, TestFailure, activatable, begin,  # noqa: E402
                       expect, filler, lua_bool, lua_val, play, prompts, run_tests, test)
 
 DUEL_DOMAIN = 0x2000000000
@@ -818,6 +818,36 @@ def dm_trigger_resolves_before_prompt():
 	expect(search, "Sangan did not resolve")
 	expect(pr and d.messages.index(pr[0]) > d.messages.index(search[0]), "return offered before Sangan resolved")
 	expect(in_dmz(d, SANGAN), "Sangan not returned")
+	return d
+
+
+@test
+def dm_return_offered_before_battle_step():
+	"""The DM is destroyed in response to an attack declaration: the return is offered before the Battle
+	Step window opens (an open game state), not only after the Damage Step."""
+	d = Duel(seed=1, flags=DUEL_MODE_DOMAIN | DUEL_PSEUDO_SHUFFLE | DUEL_ATTACK_FIRST_TURN, lp=8000)
+	add_dm(d, GENE_WARPED)
+	setup_lua(d, mz(SUMMONED_SKULL, 2))
+	filler(d, 0); filler(d, 1)
+	d.lua(f"""
+local e=Effect.GlobalEffect()
+e:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_CONTINUOUS)
+e:SetCode(EVENT_ATTACK_ANNOUNCE)
+e:SetOperation(function()
+	Duel.Destroy(Duel.GetMatchingGroup(Card.IsCode,0,LOCATION_MZONE,0,nil,{GENE_WARPED}),REASON_EFFECT)
+end)
+Duel.RegisterEffect(e,0)
+""", "destroy_on_attack.lua")
+	begin(d)
+	play(d, [Summon(GENE_WARPED, "summon")])
+	n0 = len(d.messages)
+	play(d, [Phase("bp"), Attack(SUMMONED_SKULL), Answer(True, desc=DESC_RETURN)], stop="idle", max_prompts=60)
+	pr = return_prompts(d, 0, n0)
+	battle_step = [m for m in d.messages[n0:] if m.name == "HINT" and m.data.get("htype") == 1 and m.data.get("hdata") == 24]
+	expect(pr, "no return prompt")
+	expect(battle_step, "no Battle Step window")
+	expect(d.messages.index(pr[0]) < d.messages.index(battle_step[0]), "return offered only after the Battle Step window")
+	expect(in_dmz(d, GENE_WARPED), "DM not returned")
 	return d
 
 

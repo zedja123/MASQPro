@@ -2182,6 +2182,14 @@ bool field::process(Processors::BattleCommand& arg) {
 			arg.step = 10;
 			return FALSE;
 		}
+		// Domain: the Battle Step window is an open game state, so a Deck
+		// Master that moved during the attack declaration (or the previous
+		// Battle Step chain) can be returned first.
+		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
+			emplace_process<Processors::DomainReturn>();
+			arg.step = 8;
+			return FALSE;
+		}
 		auto message = pduel->new_message(MSG_HINT);
 		message->write<uint8_t>(HINT_EVENT);
 		message->write<uint8_t>(0);
