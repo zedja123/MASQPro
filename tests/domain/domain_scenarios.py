@@ -70,6 +70,10 @@ FLASH_KNIGHT = 17390179      # Level 4 Normal Pendulum, scale 7
 SANGAN = 26202165
 CED = 94192409               # Compulsory Evacuation Device
 ULTIMATE_OFFERING = 80604091
+CHARGING_GAIA = 7841921      # Level 7, can be Normal Summoned without Tributing
+CYBER_DRAGON = 70095154
+BLACK_ROSE = 73580471         # Level 7 Synchro: 1 Tuner + 1+ non-Tuner
+FLAMVELL_GUARD = 21615956     # Level 1 Tuner Normal
 
 
 # ---------------------------------------------------------------- helpers
@@ -877,6 +881,53 @@ def ultimate_offering_normal_summons_dm():
 	expect(SUMMONED_SKULL in d.codes(0, "mzone"), "Ultimate Offering did not Normal Summon the DM")
 	expect(lp_costs(d, n0) == [(0, 500)] and lp(d) == 7500, f"LP costs {lp_costs(d, n0)} (only Ultimate Offering's 500)")
 	expect(lua_val(d, "Duel.GetFieldGroupCount(0,LOCATION_EXTRA,0)") == "0", "Extra Deck count")
+	return d
+
+
+@test
+def own_summon_proc_without_tributes():
+	"""The DM's own SINGLE summon procedure (Normal Summon without Tributing) applies in the DMZ."""
+	d = domain_duel()
+	add_dm(d, CHARGING_GAIA)
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	expect(dmz_entry(d, "summon", CHARGING_GAIA), "Charging Gaia not Normal Summonable without Tributing from the DMZ")
+	play(d, [Summon(CHARGING_GAIA, "summon")])
+	expect(CHARGING_GAIA in d.codes(0, "mzone"), "Charging Gaia not summoned")
+	return d
+
+
+@test
+def cyber_dragon_hand_procedure_condition():
+	"""A hand procedure with a condition (Cyber Dragon) follows its condition from the DMZ."""
+	d = domain_duel()
+	add_dm(d, CYBER_DRAGON)
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	expect(not dmz_entry(d, "spsummon", CYBER_DRAGON), "Cyber Dragon summonable while the opponent controls nothing")
+	d2 = domain_duel()
+	add_dm(d2, CYBER_DRAGON)
+	setup_lua(d2, mz(GENE_WARPED, 2, player=1))
+	filler(d2, 0); filler(d2, 1)
+	begin(d2)
+	expect(dmz_entry(d2, "spsummon", CYBER_DRAGON), "Cyber Dragon not summonable while the opponent controls a monster")
+	play(d2, [Summon(CYBER_DRAGON)])
+	expect(CYBER_DRAGON in d2.codes(0, "mzone"), "Cyber Dragon not summoned")
+	return d2
+
+
+@test
+def synchro_summon_from_dmz():
+	d = domain_duel()
+	add_dm(d, BLACK_ROSE)
+	setup_lua(d, mz(FLAMVELL_GUARD, 1) + mz(SUMMONED_SKULL, 3))
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	expect(dmz_entry(d, "spsummon", BLACK_ROSE), "Synchro DM not Special Summonable from the DMZ")
+	play(d, [Summon(BLACK_ROSE), Pick(FLAMVELL_GUARD), Pick(SUMMONED_SKULL)])
+	expect(BLACK_ROSE in d.codes(0, "mzone"), "Synchro DM not summoned")
+	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{BLACK_ROSE}):IsSummonType(SUMMON_TYPE_SYNCHRO)"),
+	       "not a Synchro Summon")
 	return d
 
 

@@ -7,6 +7,7 @@
 #include <algorithm> //std::sort, std::find_if_not, std::find, std::max
 #include <array>
 #include <iterator> //std::next
+#include <optional>
 #include <set>
 #include <utility> //std::make_pair, std::exchange, std::move, std::swap
 #include "duel.h"
