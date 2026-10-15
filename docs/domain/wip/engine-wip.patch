@@ -1,0 +1,2149 @@
+diff --git a/ocgcore/card.cpp b/ocgcore/card.cpp
+index dc5daf62..4c1d9e03 100644
+--- a/ocgcore/card.cpp
++++ b/ocgcore/card.cpp
+@@ -99,6 +99,24 @@ bool card::is_extra_deck_monster() const {
+ 		return false;
+ 	return true;
+ }
++// Domain: where a Deck Master in the Deck Master Zone is treated as being
++// for the methods that let it leave the zone
++uint8_t card::dmz_virtual_location() const {
++	return is_extra_deck_monster() ? LOCATION_EXTRA : LOCATION_HAND;
++}
++bool card::is_deck_master() const {
++	return owner < 2 && pduel->game_field->player[owner].deck_master == this;
++}
++uint32_t card::dmz_cost() const {
++	if(owner > 1)
++		return 0;
++	return 500 * pduel->game_field->player[owner].dm_returns;
++}
++bool card::is_dmz_cost_payable() const {
++	if(!in_dmz)
++		return true;
++	return static_cast<int64_t>(pduel->game_field->player[owner].lp) >= static_cast<int64_t>(dmz_cost());
++}
+ template<typename T>
+ void insert_value(std::vector<uint8_t>& vec, const T& _val) {
+ 	T val = _val;
+@@ -1630,7 +1648,7 @@ void card::apply_field_effect() {
+ 		return;
+ 	for (auto& it : field_effect) {
+ 		if (it.second->in_range(this)
+-				|| ((it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
++				|| (!in_dmz && (it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
+ 			pduel->game_field->add_effect(it.second);
+ 		}
+ 	}
+@@ -1644,7 +1662,7 @@ void card::cancel_field_effect() {
+ 		return;
+ 	for (auto& it : field_effect) {
+ 		if (it.second->in_range(this)
+-				|| ((it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
++				|| (!in_dmz && (it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
+ 			pduel->game_field->remove_effect(it.second);
+ 		}
+ 	}
+@@ -1655,7 +1673,7 @@ void card::cancel_field_effect() {
+ // false: before moving, summoning, chaining
+ // true: ready
+ void card::enable_field_effect(bool enabled) {
+-	if (current.location == 0)
++	if (current.location == 0 && !in_dmz)
+ 		return;
+ 	if ((enabled && get_status(STATUS_EFFECT_ENABLED)) || (!enabled && !get_status(STATUS_EFFECT_ENABLED)))
+ 		return;
+@@ -1775,7 +1793,7 @@ int32_t card::add_effect(effect* peffect) {
+ 	peffect->handler = this;
+ 	if((peffect->type & EFFECT_TYPE_FIELD)) {
+ 		if(peffect->in_range(this)
+-			|| (current.controler != PLAYER_NONE && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
++			|| (current.controler != PLAYER_NONE && !in_dmz && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
+ 			pduel->game_field->add_effect(peffect);
+ 	}
+ 	if (current.controler != PLAYER_NONE && !check_target.empty()) {
+@@ -1845,7 +1863,7 @@ void card::remove_effect(effect* peffect, effect_container::iterator it) {
+ 		}
+ 		field_effect.erase(it);
+ 		if(peffect->in_range(this)
+-			|| (current.controler != PLAYER_NONE && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
++			|| (current.controler != PLAYER_NONE && !in_dmz && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
+ 			pduel->game_field->remove_effect(peffect);
+ 	}
+ 	if ((current.controler != PLAYER_NONE) && !check_target.empty()) {
+@@ -2737,6 +2755,8 @@ int32_t card::check_set_procedure(effect* peffect, uint8_t playerid, uint8_t ign
+ 	return FALSE;
+ }
+ void card::filter_spsummon_procedure(uint8_t playerid, effect_set* peset, uint32_t summon_type) {
++	if(!is_dmz_cost_payable())
++		return;
+ 	auto pr = field_effect.equal_range(EFFECT_SPSUMMON_PROC);
+ 	uint8_t toplayer;
+ 	uint8_t topos;
+@@ -2788,6 +2808,7 @@ void card::filter_spsummon_procedure_g(uint8_t playerid, effect_set* peset) {
+ 		pduel->game_field->core.reason_effect = peffect;
+ 		pduel->game_field->core.reason_player = this->current.controler;
+ 		pduel->game_field->save_lp_cost();
++		dm_scope pendulum_scope(pduel->game_field->core.dm_pendulum_proc);
+ 		pduel->lua->add_param<LuaParam::EFFECT>(peffect);
+ 		pduel->lua->add_param<LuaParam::CARD>(this);
+ 		if(pduel->lua->check_condition(peffect->condition, 2))
+@@ -3062,6 +3083,7 @@ void card::get_unique_target(card_set* cset, uint8_t controler, card* icard) {
+ 	}
+ }
+ int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid) {
++	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
+ 	effect_set eset;
+ 	pduel->game_field->filter_player_effect(playerid, ecode, &eset, false);
+ 	filter_effect(ecode, &eset);
+@@ -3075,6 +3097,7 @@ int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid) {
+ 	return TRUE;
+ }
+ int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid, uint32_t sumtype) {
++	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
+ 	effect_set eset;
+ 	pduel->game_field->filter_player_effect(playerid, ecode, &eset, false);
+ 	filter_effect(ecode, &eset);
+@@ -3167,6 +3190,8 @@ int32_t card::is_summonable(effect* peffect, uint8_t min_tribute, uint32_t zone,
+ int32_t card::is_can_be_summoned(uint8_t playerid, uint8_t ignore_count, effect* peffect, uint8_t min_tribute, uint32_t zone) {
+ 	if(!is_summonable_card())
+ 		return FALSE;
++	if(in_dmz && (effective_location() != LOCATION_HAND || !is_dmz_cost_payable()))
++		return FALSE;
+ 	{
+ 		auto reason_effect = pduel->game_field->core.reason_effect;
+ 		if(reason_effect && reason_effect->get_handler() == this)
+@@ -3191,7 +3216,7 @@ int32_t card::is_can_be_summoned(uint8_t playerid, uint8_t ignore_count, effect*
+ 			pduel->game_field->restore_lp_cost();
+ 			return FALSE;
+ 		}
+-	} else if(current.location == LOCATION_HAND) {
++	} else if(effective_location() == LOCATION_HAND) {
+ 		if(is_affected_by_effect(EFFECT_CANNOT_SUMMON)) {
+ 			pduel->game_field->restore_lp_cost();
+ 			return FALSE;
+@@ -3299,6 +3324,8 @@ int32_t card::is_can_be_flip_summoned(uint8_t playerid) {
+ int32_t card::is_special_summonable(uint8_t playerid, uint32_t summon_type) {
+ 	if(!(data.type & TYPE_MONSTER))
+ 		return FALSE;
++	if(!is_dmz_cost_payable())
++		return FALSE;
+ 	if(is_affected_by_effect(EFFECT_CANNOT_SPECIAL_SUMMON))
+ 		return FALSE;
+ 	if(is_status(STATUS_FORBIDDEN))
+@@ -3316,20 +3343,23 @@ int32_t card::is_special_summonable(uint8_t playerid, uint32_t summon_type) {
+ int32_t card::is_can_be_special_summoned(effect* reason_effect, uint32_t sumtype, uint8_t sumpos, uint8_t sumplayer, uint8_t toplayer, uint8_t nocheck, uint8_t nolimit, uint32_t zone) {
+ 	if(reason_effect->get_handler() == this)
+ 		reason_effect->status |= EFFECT_STATUS_SUMMON_SELF;
+-	if(current.location == LOCATION_MZONE)
++	const auto location = effective_location();
++	if(location == LOCATION_MZONE)
++		return FALSE;
++	if(location == LOCATION_REMOVED && (current.position & POS_FACEDOWN))
+ 		return FALSE;
+-	if(current.location == LOCATION_REMOVED && (current.position & POS_FACEDOWN))
++	if(!is_dmz_cost_payable())
+ 		return FALSE;
+ 	if(!nolimit && is_affected_by_effect(EFFECT_REVIVE_LIMIT) && !is_status(STATUS_PROC_COMPLETE)) {
+-		if((current.location & (LOCATION_GRAVE | LOCATION_REMOVED | LOCATION_SZONE))
+-			|| (!nocheck && (current.location & (LOCATION_DECK | LOCATION_HAND))))
++		if((location & (LOCATION_GRAVE | LOCATION_REMOVED | LOCATION_SZONE))
++			|| (!nocheck && (location & (LOCATION_DECK | LOCATION_HAND))))
+ 			return FALSE;
+-		if((data.type & TYPE_PENDULUM) && current.location == LOCATION_EXTRA && (current.position & POS_FACEUP))
++		if((data.type & TYPE_PENDULUM) && location == LOCATION_EXTRA && (current.position & POS_FACEUP))
+ 			return FALSE;
+-		if(current.location == LOCATION_OVERLAY)
++		if(location == LOCATION_OVERLAY)
+ 			return FALSE;
+ 	}
+-	if((data.type & TYPE_PENDULUM) && current.location == LOCATION_EXTRA && (current.position & POS_FACEUP)
++	if((data.type & TYPE_PENDULUM) && location == LOCATION_EXTRA && (current.position & POS_FACEUP)
+ 		&& (sumtype == SUMMON_TYPE_FUSION || sumtype == SUMMON_TYPE_SYNCHRO || sumtype == SUMMON_TYPE_XYZ))
+ 		return FALSE;
+ 	if((sumpos & POS_FACEDOWN) && pduel->game_field->is_player_affected_by_effect(sumplayer, EFFECT_DEVINE_LIGHT))
+@@ -3385,7 +3415,7 @@ int32_t card::is_setable_mzone(uint8_t playerid, uint8_t ignore_count, effect* p
+ 		if(reason_effect && reason_effect->get_handler() == this)
+ 			reason_effect->status |= EFFECT_STATUS_SUMMON_SELF;
+ 	}
+-	if(current.location != LOCATION_HAND)
++	if(effective_location() != LOCATION_HAND || !is_dmz_cost_payable())
+ 		return FALSE;
+ 	if(is_status(STATUS_FORBIDDEN))
+ 		return FALSE;
+diff --git a/ocgcore/card.h b/ocgcore/card.h
+index a30f9c0c..82607590 100644
+--- a/ocgcore/card.h
++++ b/ocgcore/card.h
+@@ -118,6 +118,9 @@ public:
+ 	card_state temp{};
+ 	card_state current{};
+ 	uint8_t owner{ PLAYER_NONE };
++	// Domain: this card is a Deck Master in the Deck Master Zone
++	// (current.location 0, current.sequence DMZ_SEQUENCE, controlled by its owner, face-down)
++	bool in_dmz{ false };
+ 	struct summon_info {
+ 		uint32_t type{};
+ 		uint8_t player{};
+@@ -186,6 +189,13 @@ public:
+ 		return (set_code & 0xfffu) == (to_match & 0xfffu) && (set_code & to_match) == set_code;
+ 	}
+ 	bool is_extra_deck_monster() const;
++	uint8_t dmz_virtual_location() const;
++	uint8_t effective_location() const {
++		return in_dmz ? dmz_virtual_location() : current.location;
++	}
++	bool is_deck_master() const;
++	uint32_t dmz_cost() const;
++	bool is_dmz_cost_payable() const;
+ 
+ 	void get_infos(uint32_t query_flag);
+ 	std::optional<uint64_t> get_assumed_property(uint32_t assume_type) const {
+diff --git a/ocgcore/effect.cpp b/ocgcore/effect.cpp
+index 7a5d2e43..936660c1 100644
+--- a/ocgcore/effect.cpp
++++ b/ocgcore/effect.cpp
+@@ -148,6 +148,10 @@ int32_t effect::is_activateable(uint8_t playerid, const tevent& e, int32_t negle
+ 	if(!check_count_limit(playerid))
+ 		return FALSE;
+ 	if (!is_flag(EFFECT_FLAG_FIELD_ONLY)) {
++		// Domain: from the Deck Master Zone only the Pendulum Scale activation of the Deck Master
++		if(card* phandler = get_handler(); phandler->in_dmz
++			&& (!(type & EFFECT_TYPE_ACTIVATE) || !in_range(phandler) || !phandler->is_dmz_cost_payable()))
++			return FALSE;
+ 		if (type & EFFECT_TYPE_ACTIVATE) {
+ 			if((handler->current.controler != playerid) && !(flag[0] & EFFECT_FLAG_BOTH_SIDE))
+ 				return FALSE;
+@@ -314,6 +318,7 @@ int32_t effect::is_action_check(uint8_t playerid) {
+ 	}
+ 	eset.clear();
+ 	pduel->game_field->filter_player_effect(playerid, EFFECT_ACTIVATE_COST, &eset);
++	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
+ 	for(const auto& peff : eset) {
+ 		pduel->lua->add_param<LuaParam::EFFECT>(peff);
+ 		pduel->lua->add_param<LuaParam::EFFECT>(this);
+@@ -435,6 +440,36 @@ int32_t effect::is_target(card* pcard) {
+ 	if(pcard && !is_flag(EFFECT_FLAG_SET_AVAILABLE) && (pcard->current.location & LOCATION_ONFIELD)
+ 			&& !pcard->is_position(POS_FACEUP))
+ 		return FALSE;
++	if(pcard && pcard->in_dmz) {
++		// Domain: a Deck Master in the Deck Master Zone is not affected by other cards, except by
++		// the effects that change how it is Normal Summoned/Set, applied as if it were in the hand
++		switch(code) {
++		case EFFECT_SUMMON_PROC:
++		case EFFECT_SET_PROC:
++		case EFFECT_LIMIT_SUMMON_PROC:
++		case EFFECT_LIMIT_SET_PROC:
++		case EFFECT_DECREASE_TRIBUTE:
++		case EFFECT_DECREASE_TRIBUTE_SET:
++		case EFFECT_EXTRA_SUMMON_COUNT:
++		case EFFECT_EXTRA_SET_COUNT:
++			break;
++		default:
++			return FALSE;
++		}
++		if(!is_flag(EFFECT_FLAG_IGNORE_RANGE)) {
++			if(is_flag(EFFECT_FLAG_SPSUM_PARAM))
++				return FALSE;
++			const auto vloc = pcard->dmz_virtual_location();
++			uint16_t trange;
++			if(is_flag(EFFECT_FLAG_ABSOLUTE_TARGET))
++				trange = (pcard->current.controler == 0) ? s_range : o_range;
++			else
++				trange = (pcard->current.controler == get_handler_player()) ? s_range : o_range;
++			if(!(trange & vloc))
++				return FALSE;
++		}
++		return is_fit_target_function(pcard);
++	}
+ 	if(!is_flag(EFFECT_FLAG_IGNORE_RANGE)) {
+ 		if(pcard->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED | STATUS_SPSUMMON_STEP))
+ 			return FALSE;
+@@ -789,6 +824,19 @@ int32_t effect::in_range(card* pcard) {
+ 		real_range &= ~(LOCATION_MMZONE | LOCATION_EMZONE);
+ 		real_range |= LOCATION_MZONE;
+ 	}
++	if(pcard->in_dmz) {
++		// Domain: in the Deck Master Zone only its own summon procedures and, for a Main Deck
++		// Pendulum Monster, its Pendulum Scale activation are active, as if it were in the
++		// hand or in the Extra Deck
++		const auto vloc = pcard->dmz_virtual_location();
++		if(!(real_range & vloc))
++			return FALSE;
++		if((type & EFFECT_TYPE_FIELD) && !(type & EFFECT_TYPE_ACTIONS) && code == EFFECT_SPSUMMON_PROC)
++			return TRUE;
++		if((type & EFFECT_TYPE_ACTIVATE) && (pcard->data.type & TYPE_PENDULUM) && vloc == LOCATION_HAND)
++			return TRUE;
++		return FALSE;
++	}
+ 	return pcard->current.is_location(real_range);
+ }
+ int32_t effect::is_in_range_of_symbolic_mzone(card* pcard) {
+diff --git a/ocgcore/field.cpp b/ocgcore/field.cpp
+index 5a015e85..0668ff49 100644
+--- a/ocgcore/field.cpp
++++ b/ocgcore/field.cpp
+@@ -4,7 +4,7 @@
+  *
+  * SPDX-License-Identifier: AGPL-3.0-or-later
+  */
+-#include <algorithm> //std::sort, std::swap, std::find, std::find_if, std::min, std::none_of
++#include <algorithm> //std::sort, std::swap, std::find, std::find_if, std::min, std::max, std::none_of
+ #include <tuple> //std::tie
+ #include <utility> //std::move
+ #include <vector>
+@@ -194,6 +194,10 @@ void field::add_card(uint8_t playerid, card* pcard, uint8_t location, uint8_t se
+ 	}
+ 	}
+ 	pcard->current.pzone = pzone;
++	// Domain: the Deck Master changed zone type (moves on/within the field do not count)
++	if(location != 0 && pcard->is_deck_master()
++		&& !((pcard->previous.location & (LOCATION_ONFIELD | LOCATION_OVERLAY)) && (location & LOCATION_ONFIELD)))
++		player[pcard->owner].dm_moved = true;
+ 	pcard->apply_field_effect();
+ 	pcard->fieldid = infos.field_id++;
+ 	pcard->fieldid_r = pcard->fieldid;
+@@ -273,6 +277,17 @@ bool field::move_card(uint8_t playerid, card* pcard, uint8_t location, uint8_t s
+ 		location = LOCATION_EXTRA;
+ 		pcard->sendto_param.position = POS_FACEDOWN_DEFENSE;
+ 	}
++	if(pcard->in_dmz) {
++		// Domain: a Deck Master moved out of the Deck Master Zone by something else than
++		// MoveToField (which already handled the leave); no cost, not a zone change
++		auto& owner = player[pcard->owner];
++		const bool moved = owner.dm_moved;
++		dmz_leave(pcard, false);
++		add_card(playerid, pcard, location, sequence, pzone);
++		owner.dm_moved = moved;
++		dmz_hint(pcard, HINT_DMZ_REMOVE);
++		return true;
++	}
+ 	if (pcard->current.location) {
+ 		if (pcard->current.location == location && pcard->current.pzone == pzone) {
+ 			if (pcard->current.location == LOCATION_DECK) {
+@@ -658,7 +673,7 @@ int32_t field::is_location_useable(uint32_t playerid, uint32_t location, uint32_
+ // list: store local flag in list
+ // return: usable count of LOCATION_MZONE or real LOCATION_SZONE of playerid requested by uplayer (may be negative)
+ int32_t field::get_useable_count(card* pcard, uint8_t playerid, uint8_t location, uint8_t uplayer, uint32_t reason, uint32_t zone, uint32_t* list) {
+-	if(location == LOCATION_MZONE && pcard && pcard->current.location == LOCATION_EXTRA)
++	if(location == LOCATION_MZONE && pcard && pcard->effective_location() == LOCATION_EXTRA)
+ 		return get_useable_count_fromex(pcard, playerid, uplayer, zone, list);
+ 	else
+ 		return get_useable_count_other(pcard, playerid, location, uplayer, reason, zone, list);
+@@ -680,7 +695,7 @@ int32_t field::get_useable_count_fromex(card* pcard, uint8_t playerid, uint8_t u
+ 	return useable_count;
+ }
+ int32_t field::get_spsummonable_count(card* pcard, uint8_t playerid, uint32_t zone, uint32_t* list) {
+-	if(pcard->current.location == LOCATION_EXTRA)
++	if(pcard->effective_location() == LOCATION_EXTRA)
+ 		return get_spsummonable_count_fromex(pcard, playerid, playerid, zone, list);
+ 	else
+ 		return get_tofield_count(pcard, playerid, LOCATION_MZONE, playerid, LOCATION_REASON_TOFIELD, zone, list);
+@@ -1031,6 +1046,11 @@ void field::reset_sequence(uint8_t playerid, uint8_t location) {
+ }
+ void field::swap_deck_and_grave(uint8_t playerid) {
+ 	auto& cur_player = player[playerid];
++	for(auto& pl : player) {
++		card* dm = pl.deck_master;
++		if(dm && !dm->in_dmz && dm->current.controler == playerid && (dm->current.location & (LOCATION_DECK | LOCATION_GRAVE)))
++			pl.dm_moved = true;
++	}
+ 	for(auto& pcard : cur_player.list_grave) {
+ 		if(core.current_chain.size() > 0)
+ 			core.just_sent_cards.insert(pcard);
+@@ -1248,6 +1268,85 @@ void field::next_player(uint8_t playerid) {
+ bool field::is_flag(uint64_t flag) const {
+ 	return (core.duel_options & flag) == flag;
+ }
++// Domain: the Deck Master of playerid, if it is in the Deck Master Zone
++card* field::dmz_card(uint8_t playerid) const {
++	if(playerid > 1)
++		return nullptr;
++	card* pcard = player[playerid].deck_master;
++	if(pcard && pcard->in_dmz)
++		return pcard;
++	return nullptr;
++}
++// Domain: effects that make a player pay to activate/summon/set a card; they see a Deck Master
++// in the Deck Master Zone where it really is (Chain Energy does not apply to it)
++bool field::dmz_is_cost_code(const effect* peffect) const {
++	if(peffect->type & EFFECT_TYPE_ACTIONS)
++		return false;
++	switch(peffect->code) {
++	case EFFECT_ACTIVATE_COST:
++	case EFFECT_SUMMON_COST:
++	case EFFECT_SPSUMMON_COST:
++	case EFFECT_MSET_COST:
++	case EFFECT_SSET_COST:
++	case EFFECT_FLIPSUMMON_COST:
++		return true;
++	default:
++		return false;
++	}
++}
++// Domain: a predicate about a proper summon returned true for the probed Deck Master
++void field::dmz_mark_probe(card* pcard, bool result) {
++	if(result && !core.dm_probes.empty() && core.dm_probes.back().pcard == pcard)
++		core.dm_probes.back().hit = true;
++}
++void field::dmz_hint(card* pcard, uint8_t hint) {
++	uint64_t data = pcard->data.code;
++	if(hint == HINT_DMZ)
++		data |= static_cast<uint64_t>(player[pcard->owner].dm_returns) << 32;
++	auto message = pduel->new_message(MSG_HINT);
++	message->write<uint8_t>(hint);
++	message->write<uint8_t>(pcard->owner);
++	message->write<uint64_t>(data);
++}
++// Domain: the Deck Master leaves the Deck Master Zone; called before it is moved,
++// while current.* still describes the zone
++void field::dmz_leave(card* pcard, bool pay_cost) {
++	auto& owner = player[pcard->owner];
++	if(pay_cost) {
++		// a rule cost: not changed or replaced by effects, no event
++		const auto cost = static_cast<int64_t>(pcard->dmz_cost());
++		const auto amount = static_cast<int32_t>(std::min<int64_t>(cost, std::max<int32_t>(owner.lp, 0)));
++		if(amount > 0) {
++			owner.lp -= amount;
++			auto message = pduel->new_message(MSG_PAY_LPCOST);
++			message->write<uint8_t>(pcard->owner);
++			message->write<uint32_t>(amount);
++		}
++	}
++	pcard->cancel_field_effect();
++	pcard->in_dmz = false;
++	pcard->previous.controler = pcard->owner;
++	pcard->previous.location = pcard->dmz_virtual_location();
++	pcard->previous.sequence = 0;
++	pcard->previous.position = pcard->current.position;
++	pcard->previous.pzone = false;
++}
++// Domain: the Deck Master returns to the Deck Master Zone from where it is now
++void field::dmz_enter(card* pcard) {
++	const auto playerid = pcard->owner;
++	pcard->enable_field_effect(false);
++	remove_card(pcard);
++	pcard->set_status(STATUS_PROC_COMPLETE, FALSE);
++	pcard->in_dmz = true;
++	add_card(playerid, pcard, 0, 0);
++	pcard->current.sequence = DMZ_SEQUENCE;
++	pcard->current.position = POS_FACEDOWN;
++	pcard->reset(RESET_TODECK, RESET_EVENT);
++	pcard->clear_relate_effect();
++	pcard->clear_card_target();
++	pcard->enable_field_effect(true);
++	pcard->refresh_disable_status();
++}
+ bool field::has_separate_pzone(uint8_t p) const {
+ 	(void)p;
+ 	return is_flag(DUEL_SEPARATE_PZONE);
+@@ -1573,23 +1672,38 @@ int32_t field::filter_matching_card(int32_t findex, uint8_t self, uint32_t locat
+ 	if(self != 0 && self != 1)
+ 		return FALSE;
+ 	int32_t count = 0;
++	auto accept = [&](card* pcard)->bool {
++		if(pret) {
++			*pret = pcard;
++			return true;
++		}
++		++count;
++		if(fcount && count >= fcount)
++			return true;
++		if(pgroup)
++			pgroup->container.insert(pcard);
++		return false;
++	};
+ 	auto checkc = [&](auto* pcard, bool(*extrafil)(card* pcard)=nullptr)->bool {
+ 		if(pcard && (!extrafil || extrafil(pcard))
+ 		   && pcard != pexception && !(pexgroup && pexgroup->has_card(pcard))
+ 		   && (!findex || pduel->lua->check_matching(pcard, findex, extraargs))
+-		   && (!is_target || pcard->is_capable_be_effect_target(core.reason_effect, core.reason_player))) {
+-			if(pret) {
+-				*pret = pcard;
+-				return true;
+-			}
+-			++count;
+-			if(fcount && count >= fcount)
+-				return true;
+-			if(pgroup)
+-				pgroup->container.insert(pcard);
+-		}
++		   && (!is_target || pcard->is_capable_be_effect_target(core.reason_effect, core.reason_player)))
++			return accept(pcard);
+ 		return false;
+ 	};
++	// Domain: the player's own Deck Master in the Deck Master Zone is included only when the filter
++	// is true because the card can be properly summoned (or Normal Summoned/Set) by this effect
++	auto checkdm = [&](card* pcard)->bool {
++		if(pcard == pexception || (pexgroup && pexgroup->has_card(pcard)))
++			return false;
++		bool matched;
++		{
++			dm_probe_frame frame(core.dm_probes, pcard);
++			matched = pduel->lua->check_matching(pcard, findex, extraargs) && frame.hit();
++		}
++		return matched && accept(pcard);
++	};
+ 	auto mzonechk = [&checkc](auto pcard)->bool {
+ 		return checkc(pcard, [](auto pcard)->bool {return !pcard->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_SPSUMMON_STEP); });
+ 	};
+@@ -1653,6 +1767,11 @@ int32_t field::filter_matching_card(int32_t findex, uint8_t self, uint32_t locat
+ 			return TRUE;
+ 		if((location & LOCATION_REMOVED) && check_list(player[self].list_remove, checkc))
+ 			return TRUE;
++		if(p == 0 && findex && !is_target && core.reason_player == self) {
++			card* dm = dmz_card(self);
++			if(dm && (location & dm->dmz_virtual_location()) && checkdm(dm))
++				return TRUE;
++		}
+ 	}
+ 	return FALSE;
+ }
+@@ -1747,6 +1866,15 @@ int32_t field::filter_field_card(uint8_t self, uint32_t location1, uint32_t loca
+ 			if(pgroup)
+ 				pgroup->container.insert(player[self].list_hand.begin(), player[self].list_hand.end());
+ 			count += player[self].list_hand.size();
++			// Domain: a Pendulum Summon gathers a Main Deck Deck Master as if it were in the hand
++			if(p == 0 && core.dm_pendulum_proc && core.reason_player == self) {
++				card* dm = dmz_card(self);
++				if(dm && dm->dmz_virtual_location() == LOCATION_HAND) {
++					if(pgroup)
++						pgroup->container.insert(dm);
++					++count;
++				}
++			}
+ 		}
+ 		if(location & LOCATION_DECK) {
+ 			if(pgroup)
+diff --git a/ocgcore/field.h b/ocgcore/field.h
+index 64a4a62e..11d58fd7 100644
+--- a/ocgcore/field.h
++++ b/ocgcore/field.h
+@@ -90,6 +90,11 @@ struct player_info {
+ 	uint32_t exchanges{ 0 };
+ 	uint32_t tag_index{ 0 };
+ 	bool recharge{ false };
++	// Domain: the player's Deck Master, how many times it returned to the Deck Master Zone,
++	// and whether it changed zone type since the last open game state
++	card* deck_master{ nullptr };
++	uint32_t dm_returns{ 0 };
++	bool dm_moved{ false };
+ 	card_vector list_mzone;
+ 	card_vector list_szone;
+ 	card_vector list_main;
+@@ -171,6 +176,35 @@ struct field_info {
+ 	uint8_t priorities[2]{ 0,0 };
+ 	bool can_shuffle{ true };
+ };
++// Domain: a Deck Master evaluated by a card query while it is in the Deck Master Zone
++struct dm_probe {
++	card* pcard;
++	bool hit;
++};
++// Domain: counts an evaluation scope (cost effects, Pendulum Summon procedures)
++class dm_scope {
++public:
++	explicit dm_scope(uint32_t& counter_) : counter(counter_) { ++counter; }
++	~dm_scope() { --counter; }
++	dm_scope(const dm_scope&) = delete;
++	dm_scope& operator=(const dm_scope&) = delete;
++private:
++	uint32_t& counter;
++};
++// Domain: a probe frame, popped on every exit path (filters nest and Lua errors unwind)
++class dm_probe_frame {
++public:
++	dm_probe_frame(std::vector<dm_probe>& probes_, card* pcard) : probes(probes_), index(probes_.size()) {
++		probes.push_back({ pcard, false });
++	}
++	~dm_probe_frame() { probes.resize(index); }
++	dm_probe_frame(const dm_probe_frame&) = delete;
++	dm_probe_frame& operator=(const dm_probe_frame&) = delete;
++	bool hit() const { return probes.size() > index && probes[index].hit; }
++private:
++	std::vector<dm_probe>& probes;
++	size_t index;
++};
+ struct lpcost {
+ 	int32_t count{ 0 };
+ 	int32_t amount{ 0 };
+@@ -374,6 +408,10 @@ struct processor {
+ 	action_counter_t chain_counter;
+ 	processor_list recover_damage_reserve;
+ 	effect_vector dec_count_reserve;
++	// Domain
++	std::vector<dm_probe> dm_probes;
++	uint32_t dm_cost_check{ 0 };
++	uint32_t dm_pendulum_proc{ 0 };
+ 	action_counter_t& get_counter_map(ActivityType counter_type) {
+ 		switch(counter_type) {
+ 			case ACTIVITY_SUMMON:
+@@ -454,6 +492,12 @@ public:
+ 	void next_player(uint8_t playerid);
+ 
+ 	bool is_flag(uint64_t flag) const;
++	card* dmz_card(uint8_t playerid) const;
++	bool dmz_is_cost_code(const effect* peffect) const;
++	void dmz_mark_probe(card* pcard, bool result);
++	void dmz_leave(card* pcard, bool pay_cost);
++	void dmz_enter(card* pcard);
++	void dmz_hint(card* pcard, uint8_t hint);
+ 	bool has_separate_pzone(uint8_t p) const;
+ 	uint32_t get_pzone_zones_flag() const;
+ 	uint8_t get_pzone_index(uint8_t seq, uint8_t p) const;
+@@ -604,6 +648,7 @@ public:
+ 	bool process(Processors::Adjust& arg);
+ 	bool process(Processors::Startup& arg);
+ 	bool process(Processors::RefreshRelay& arg);
++	bool process(Processors::DomainReturn& arg);
+ 
+ 	//operations
+ 	int32_t negate_chain(uint8_t chaincount);
+diff --git a/ocgcore/libcard.cpp b/ocgcore/libcard.cpp
+index b84df63a..22e9ed06 100644
+--- a/ocgcore/libcard.cpp
++++ b/ocgcore/libcard.cpp
+@@ -487,6 +487,8 @@ LUA_FUNCTION(GetBattlePosition) {
+ LUA_FUNCTION(GetLocation) {
+ 	if(self->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED | STATUS_SPSUMMON_STEP))
+ 		lua_pushinteger(L, 0);
++	else if(self->in_dmz && !pduel->game_field->core.dm_cost_check)
++		lua_pushinteger(L, self->dmz_virtual_location());
+ 	else
+ 		lua_pushinteger(L, self->current.location);
+ 	return 1;
+@@ -1371,7 +1373,9 @@ LUA_FUNCTION(IsSummonableCard) {
+ }
+ LUA_FUNCTION(IsSpecialSummonable) {
+ 	auto sumtype = lua_get<uint32_t, 0>(L, 2);
+-	lua_pushboolean(L, self->is_special_summonable(pduel->game_field->core.reason_player, sumtype));
++	const auto res = self->is_special_summonable(pduel->game_field->core.reason_player, sumtype);
++	pduel->game_field->dmz_mark_probe(self, res);
++	lua_pushboolean(L, res);
+ 	return 1;
+ }
+ LUA_FUNCTION(IsFusionSummonableCard) {
+@@ -1402,7 +1406,9 @@ inline int32_t spsummonable_rule(lua_State* L, uint32_t cardtype, uint32_t sumty
+ 	core.only_use_mats = materials;
+ 	core.forced_summon_minc = minc;
+ 	core.forced_summon_maxc = maxc;
+-	lua_pushboolean(L, pcard->is_special_summonable(p, sumtype));
++	const auto res = pcard->is_special_summonable(p, sumtype);
++	pduel->game_field->dmz_mark_probe(pcard, res);
++	lua_pushboolean(L, res);
+ 	core.must_use_mats = nullptr;
+ 	core.only_use_mats = nullptr;
+ 	core.forced_summon_minc = 0;
+@@ -1432,7 +1438,9 @@ LUA_FUNCTION(IsSummonable) {
+ 		peffect = lua_get<effect*, true>(L, 3);
+ 	auto minc = lua_get<uint16_t, 0>(L, 4);
+ 	auto zone = lua_get<uint16_t, 0x1f>(L, 5);
+-	lua_pushboolean(L, self->is_can_be_summoned(pduel->game_field->core.reason_player, ign, peffect, minc, zone));
++	const auto res = self->is_can_be_summoned(pduel->game_field->core.reason_player, ign, peffect, minc, zone);
++	pduel->game_field->dmz_mark_probe(self, res);
++	lua_pushboolean(L, res);
+ 	return 1;
+ }
+ LUA_FUNCTION(IsMSetable) {
+@@ -1443,7 +1451,9 @@ LUA_FUNCTION(IsMSetable) {
+ 		peffect = lua_get<effect*, true>(L, 3);
+ 	auto minc = lua_get<uint16_t, 0>(L, 4);
+ 	auto zone = lua_get<uint32_t, 0xff>(L, 5);
+-	lua_pushboolean(L, self->is_setable_mzone(pduel->game_field->core.reason_player, ign, peffect, minc, zone));
++	const auto res = self->is_setable_mzone(pduel->game_field->core.reason_player, ign, peffect, minc, zone);
++	pduel->game_field->dmz_mark_probe(self, res);
++	lua_pushboolean(L, res);
+ 	return 1;
+ }
+ LUA_FUNCTION(IsSSetable) {
+@@ -1462,7 +1472,26 @@ LUA_FUNCTION(IsCanBeSpecialSummoned) {
+ 	auto sumpos = lua_get<uint8_t, POS_FACEUP>(L, 7);
+ 	auto toplayer = lua_get<uint8_t>(L, 8, sumplayer);
+ 	auto zone = lua_get<uint32_t, 0xff>(L, 9);
+-	lua_pushboolean(L, self->is_can_be_special_summoned(peffect, sumtype, sumpos, sumplayer, toplayer, nocheck, nolimit, zone));
++	const auto res = self->is_can_be_special_summoned(peffect, sumtype, sumpos, sumplayer, toplayer, nocheck, nolimit, zone);
++	if(res && self->in_dmz) {
++		// Domain: only a proper summon lets a Deck Master leave the Deck Master Zone
++		switch((sumtype | SUMMON_TYPE_SPECIAL) & 0xff000000) {
++		case SUMMON_TYPE_PENDULUM:
++			if(self->dmz_virtual_location() != LOCATION_HAND)
++				break;
++			[[fallthrough]];
++		case SUMMON_TYPE_RITUAL:
++		case SUMMON_TYPE_FUSION:
++		case SUMMON_TYPE_SYNCHRO:
++		case SUMMON_TYPE_XYZ:
++		case SUMMON_TYPE_LINK:
++			pduel->game_field->dmz_mark_probe(self, true);
++			break;
++		default:
++			break;
++		}
++	}
++	lua_pushboolean(L, res);
+ 	return 1;
+ }
+ LUA_FUNCTION(IsAbleToHand) {
+@@ -1630,6 +1659,9 @@ LUA_FUNCTION(IsLocation) {
+ 			lua_pushboolean(L, 1);
+ 		else
+ 			lua_pushboolean(L, 0);
++	} else if(self->in_dmz && !pduel->game_field->core.dm_cost_check) {
++		// Domain: a Deck Master in the Deck Master Zone is treated as in the hand/Extra Deck
++		lua_pushboolean(L, (self->dmz_virtual_location() & loc) != 0);
+ 	} else
+ 		lua_pushboolean(L, (self->current.location & loc) != 0);
+ 	return 1;
+diff --git a/ocgcore/libduel.cpp b/ocgcore/libduel.cpp
+index 1507dcf8..d0da41d2 100644
+--- a/ocgcore/libduel.cpp
++++ b/ocgcore/libduel.cpp
+@@ -1330,6 +1330,9 @@ LUA_STATIC_FUNCTION(DiscardHand) {
+ 	auto reason = lua_get<uint32_t>(L, 5);
+ 	auto pgroup = pduel->new_group();
+ 	pduel->game_field->filter_matching_card(findex, playerid, LOCATION_HAND, 0, pgroup, pexception, pexgroup, extraargs);
++	// Domain: a Deck Master in the Deck Master Zone is never discarded
++	if(card* pcard = pduel->game_field->dmz_card(playerid); pcard)
++		pgroup->container.erase(pcard);
+ 	pduel->game_field->core.select_cards.assign(pgroup->container.begin(), pgroup->container.end());
+ 	if(pduel->game_field->core.select_cards.size() == 0) {
+ 		lua_pushinteger(L, 0);
+@@ -3881,6 +3884,7 @@ inline int32_t is_player_can_procedure_summon_group(lua_State* L, uint32_t summo
+ 		core.reason_effect = peff;
+ 		core.reason_player = pcard->current.controler;
+ 		pduel->game_field->save_lp_cost();
++		dm_scope pendulum_scope(core.dm_pendulum_proc);
+ 		pduel->lua->add_param<LuaParam::EFFECT>(peff);
+ 		pduel->lua->add_param<LuaParam::CARD>(pcard);
+ 		pduel->lua->add_param<LuaParam::BOOLEAN>(TRUE);
+diff --git a/ocgcore/ocgapi.cpp b/ocgcore/ocgapi.cpp
+index 26dc09ca..b62b9e5b 100644
+--- a/ocgcore/ocgapi.cpp
++++ b/ocgcore/ocgapi.cpp
+@@ -65,6 +65,29 @@ void OCG_DuelNewCard(OCG_Duel ocg_duel, const OCG_NewCardInfo* info_ptr) {
+ 	const auto& info = *info_ptr;
+ 	if(bit::popcnt(info.loc) > 1)
+ 		return;
++	if(info.loc == LOCATION_DECK_MASTER) {
++		// Domain: the team's Deck Master starts the duel in the Deck Master Zone
++		constexpr uint32_t TYPE_SKILL_CARD = 0x8000000;
++		constexpr uint32_t TYPE_ACTION_CARD = 0x10000000;
++		if(info.duelist != 0 || info.team > 1 || !game_field.is_flag(DUEL_DOMAIN))
++			return;
++		auto& team = game_field.player[info.team];
++		if(team.deck_master)
++			return;
++		const auto& data = pduel->read_card(info.code);
++		if(!(data.type & TYPE_MONSTER) || (data.type & (TYPE_TOKEN | TYPE_SKILL_CARD | TYPE_ACTION_CARD)))
++			return;
++		card* pcard = pduel->new_card(info.code);
++		pcard->owner = info.team;
++		pcard->in_dmz = true;
++		team.deck_master = pcard;
++		game_field.add_card(info.team, pcard, 0, 0);
++		pcard->current.sequence = DMZ_SEQUENCE;
++		pcard->current.position = POS_FACEDOWN;
++		pcard->enable_field_effect(true);
++		game_field.adjust_instant();
++		return;
++	}
+ 	auto duelist = info.duelist;
+ 	if(duelist == 0) {
+ 		if(game_field.is_location_useable(info.con, info.loc, info.seq)) {
+diff --git a/ocgcore/operations.cpp b/ocgcore/operations.cpp
+index 780d132c..4ace3b9d 100644
+--- a/ocgcore/operations.cpp
++++ b/ocgcore/operations.cpp
+@@ -182,7 +182,7 @@ void field::special_summon(card_set target, uint32_t sumtype, uint8_t sumplayer,
+ 		pcard->temp.reason_effect = pcard->current.reason_effect;
+ 		pcard->temp.reason_player = pcard->current.reason_player;
+ 		pcard->summon.type = (sumtype & 0xf00ffff) | SUMMON_TYPE_SPECIAL;
+-		pcard->summon.location = pcard->current.location;
++		pcard->summon.location = pcard->effective_location();
+ 		pcard->summon.sequence = pcard->current.sequence;
+ 		pcard->summon.pzone = pcard->current.pzone;
+ 		pcard->summon.player = sumplayer;
+@@ -221,7 +221,7 @@ void field::special_summon_step(card* target, uint32_t sumtype, uint8_t sumplaye
+ 	target->temp.reason_effect = target->current.reason_effect;
+ 	target->temp.reason_player = target->current.reason_player;
+ 	target->summon.type = (sumtype & 0xf00ffff) | SUMMON_TYPE_SPECIAL;
+-	target->summon.location = target->current.location;
++	target->summon.location = target->effective_location();
+ 	target->summon.sequence = target->current.sequence;
+ 	target->summon.pzone = target->current.pzone;
+ 	target->summon.player = sumplayer;
+@@ -2440,7 +2440,7 @@ bool field::process(Processors::MonsterSet& arg) {
+ 	case 0: {
+ 		if(target->is_affected_by_effect(EFFECT_UNSUMMONABLE_CARD))
+ 			return TRUE;
+-		if(target->current.location != LOCATION_HAND)
++		if(target->effective_location() != LOCATION_HAND)
+ 			return TRUE;
+ 		if(!(target->data.type & TYPE_MONSTER))
+ 			return TRUE;
+@@ -3094,7 +3094,7 @@ bool field::process(Processors::SpSummonRule& arg) {
+ 		const auto sumtype = (retval.size() > 0 ? (static_cast<uint32_t>(retval[0]) & 0xf00ffff) : 0) | SUMMON_TYPE_SPECIAL;
+ 		uint32_t zone = retval.size() > 1 ? static_cast<uint32_t>(retval[1]) : 0xff;
+ 		target->summon.type = sumtype;
+-		target->summon.location = target->current.location;
++		target->summon.location = target->effective_location();
+ 		target->summon.sequence = target->current.sequence;
+ 		target->summon.pzone = target->current.pzone;
+ 		target->enable_field_effect(false);
+@@ -3401,7 +3401,7 @@ bool field::process(Processors::SpSummonRule& arg) {
+ 		pcard->summon.player = sumplayer;
+ 		const auto sumtype = (proc->get_value(pcard) & 0xff00ffff) | SUMMON_TYPE_SPECIAL;
+ 		pcard->summon.type = sumtype;
+-		pcard->summon.location = pcard->current.location;
++		pcard->summon.location = pcard->effective_location();
+ 		pcard->summon.sequence = pcard->current.sequence;
+ 		pcard->summon.pzone = pcard->current.pzone;
+ 		effect_set eset;
+@@ -3429,12 +3429,12 @@ bool field::process(Processors::SpSummonRule& arg) {
+ 		int32_t ct1 = get_tofield_count(pcard, sumplayer, LOCATION_MZONE, sumplayer, LOCATION_REASON_TOFIELD, zone, &flag1);
+ 		int32_t ct2 = get_spsummonable_count_fromex(pcard, sumplayer, sumplayer, zone, &flag2);
+ 		for(auto it = pgroup->it; it != pgroup->container.end(); ++it) {
+-			if((*it)->current.location != LOCATION_EXTRA)
++			if((*it)->effective_location() != LOCATION_EXTRA)
+ 				--ct1;
+ 			else
+ 				--ct2;
+ 		}
+-		if(pcard->current.location != LOCATION_EXTRA) {
++		if(pcard->effective_location() != LOCATION_EXTRA) {
+ 			if(ct2 == 0)
+ 				zone = flag2;
+ 		} else {
+@@ -3678,6 +3678,7 @@ bool field::process(Processors::SpSummonRuleGroup& arg) {
+ 			core.reason_effect = peff;
+ 			core.reason_player = pcard->current.controler;
+ 			save_lp_cost();
++			dm_scope pendulum_scope(core.dm_pendulum_proc);
+ 			pduel->lua->add_param<LuaParam::EFFECT>(peff);
+ 			pduel->lua->add_param<LuaParam::CARD>(pcard);
+ 			pduel->lua->add_param<LuaParam::BOOLEAN>(TRUE);
+@@ -3718,7 +3719,7 @@ bool field::process(Processors::SpSummonStep& arg) {
+ 	switch(arg.step) {
+ 	case 0: {
+ 		if(target->is_affected_by_effect(EFFECT_REVIVE_LIMIT) && !target->is_status(STATUS_PROC_COMPLETE)) {
+-			if((!nolimit && (target->current.location & 0x38)) || (!nocheck && !nolimit && (target->current.location & 0x3))) {
++			if((!nolimit && (target->effective_location() & 0x38)) || (!nocheck && !nolimit && (target->effective_location() & 0x3))) {
+ 				arg.step = 4;
+ 				return FALSE;
+ 			}
+@@ -3731,7 +3732,7 @@ bool field::process(Processors::SpSummonStep& arg) {
+ 			return FALSE;
+ 		}
+ 		if(get_useable_count(target, playerid, LOCATION_MZONE, target->summon.player, LOCATION_REASON_TOFIELD, zone) <= 0) {
+-			if(target->current.location != LOCATION_GRAVE)
++			if(target->current.location != LOCATION_GRAVE && !target->in_dmz)
+ 				core.ss_tograve_set.insert(target);
+ 			arg.step = 4;
+ 			return FALSE;
+@@ -3780,12 +3781,12 @@ bool field::process(Processors::SpSummonStep& arg) {
+ 			for(auto& pcard : targets->container) {
+ 				if(pcard->current.location == LOCATION_MZONE)
+ 					continue;
+-				if(pcard->current.location != LOCATION_EXTRA)
++				if(pcard->effective_location() != LOCATION_EXTRA)
+ 					--ct1;
+ 				else
+ 					--ct2;
+ 			}
+-			if(target->current.location != LOCATION_EXTRA) {
++			if(target->effective_location() != LOCATION_EXTRA) {
+ 				if(ct2 == 0) {
+ 					zone &= flag2;
+ 					if(!extra)
+@@ -5306,6 +5307,11 @@ bool field::process(Processors::MoveToField& arg) {
+ 				}
+ 			}
+ 		}
++		// Domain: a Deck Master leaving the Deck Master Zone pays its cost now; this is not a zone change
++		const bool from_dmz = target->in_dmz;
++		const bool dm_moved = from_dmz && player[target->owner].dm_moved;
++		if(from_dmz)
++			dmz_leave(target, true);
+ 		auto message = pduel->new_message(MSG_MOVE);
+ 		message->write<uint32_t>(target->data.code);
+ 		message->write(target->get_info_location());
+@@ -5317,6 +5323,10 @@ bool field::process(Processors::MoveToField& arg) {
+ 		target->set_status(STATUS_LEAVE_CONFIRMED, FALSE);
+ 		message->write(target->get_info_location());
+ 		message->write<uint32_t>(target->current.reason);
++		if(from_dmz) {
++			player[target->owner].dm_moved = dm_moved;
++			dmz_hint(target, HINT_DMZ_REMOVE);
++		}
+ 		if((target->current.location != LOCATION_MZONE)) {
+ 			if(target->equiping_cards.size()) {
+ 				destroy(target->equiping_cards, nullptr, REASON_LOST_TARGET + REASON_RULE, PLAYER_NONE);
+diff --git a/ocgcore/processor.cpp b/ocgcore/processor.cpp
+index d2c6c09a..1e9febdd 100644
+--- a/ocgcore/processor.cpp
++++ b/ocgcore/processor.cpp
+@@ -109,7 +109,17 @@ bool field::process(Processors::ExecuteOperation& arg) {
+ 	core.reason_player = triggering_player;
+ 	uint32_t count = static_cast<uint32_t>(pduel->lua->params.size());
+ 	lua_Integer yield_value = 0;
+-	int32_t result = pduel->lua->call_coroutine(triggering_effect->operation, count, &yield_value, step);
++	int32_t result;
++	{
++		// Domain: cost effects see a Deck Master in the Deck Master Zone where it really is,
++		// a Pendulum Summon procedure sees a Main Deck one as if it were in the hand
++		std::optional<dm_scope> scope;
++		if(dmz_is_cost_code(triggering_effect))
++			scope.emplace(core.dm_cost_check);
++		else if(triggering_effect->code == EFFECT_SPSUMMON_PROC_G && !(triggering_effect->type & EFFECT_TYPE_ACTIONS))
++			scope.emplace(core.dm_pendulum_proc);
++		result = pduel->lua->call_coroutine(triggering_effect->operation, count, &yield_value, step);
++	}
+ 	returns.set<int32_t>(0, static_cast<int32_t>(yield_value));
+ 	if (result != COROUTINE_YIELD) {
+ 		core.reason_effect = nullptr;
+@@ -298,6 +308,11 @@ bool field::process(Processors::PhaseEvent& arg) {
+ 	auto phase = arg.phase;
+ 	switch(arg.step) {
+ 	case 0: {
++		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
++			emplace_process<Processors::DomainReturn>();
++			arg.step = Processors::restart;
++			return FALSE;
++		}
+ 		if((phase == PHASE_DRAW && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_DP)))
+ 				|| (phase == PHASE_STANDBY && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_SP)))
+ 				|| (phase == PHASE_BATTLE_START && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_BP)))
+@@ -1449,6 +1464,11 @@ int32_t field::process_single_event(effect* peffect, const tevent& e, chain_list
+ bool field::process(Processors::IdleCommand& arg) {
+ 	switch(arg.step) {
+ 	case 0: {
++		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
++			emplace_process<Processors::DomainReturn>();
++			arg.step = Processors::restart;
++			return FALSE;
++		}
+ 		bool must_attack = false;
+ 		core.select_chains.clear();
+ 		nil_event.event_code = EVENT_FREE_CHAIN;
+@@ -1532,6 +1552,9 @@ bool field::process(Processors::IdleCommand& arg) {
+ 		for(auto& pcard : player[infos.turn_player].list_hand)
+ 			if(pcard->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
+ 				core.summonable_cards.push_back(pcard);
++		card* deck_master = dmz_card(infos.turn_player);
++		if(deck_master && deck_master->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
++			core.summonable_cards.push_back(deck_master);
+ 		for(auto& pcard : player[infos.turn_player].list_mzone) {
+ 			if(pcard && pcard->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
+ 				core.summonable_cards.push_back(pcard);
+@@ -1559,10 +1582,13 @@ bool field::process(Processors::IdleCommand& arg) {
+ 			core.reason_effect = peff;
+ 			core.reason_player = pcard->current.controler;
+ 			save_lp_cost();
+-			pduel->lua->add_param<LuaParam::EFFECT>(peff);
+-			pduel->lua->add_param<LuaParam::CARD>(pcard);
+-			if(pduel->lua->check_condition(peff->condition, 2))
+-				core.spsummonable_cards.push_back(pcard);
++			{
++				dm_scope pendulum_scope(core.dm_pendulum_proc);
++				pduel->lua->add_param<LuaParam::EFFECT>(peff);
++				pduel->lua->add_param<LuaParam::CARD>(pcard);
++				if(pduel->lua->check_condition(peff->condition, 2))
++					core.spsummonable_cards.push_back(pcard);
++			}
+ 			restore_lp_cost();
+ 			core.reason_effect = oreason;
+ 			core.reason_player = op;
+@@ -1581,6 +1607,8 @@ bool field::process(Processors::IdleCommand& arg) {
+ 			if(pcard->is_setable_szone(infos.turn_player))
+ 				core.ssetable_cards.push_back(pcard);
+ 		}
++		if(deck_master && deck_master->is_setable_mzone(infos.turn_player, FALSE, nullptr, 0))
++			core.msetable_cards.push_back(deck_master);
+ 		emplace_process<Processors::SelectIdleCmd>(infos.turn_player);
+ 		return FALSE;
+ 	}
+@@ -1788,6 +1816,11 @@ bool field::process(Processors::IdleCommand& arg) {
+ bool field::process(Processors::BattleCommand& arg) {
+ 	switch(arg.step) {
+ 	case 0: {
++		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
++			emplace_process<Processors::DomainReturn>();
++			arg.step = Processors::restart;
++			return FALSE;
++		}
+ 		core.select_chains.clear();
+ 		nil_event.event_code = EVENT_FREE_CHAIN;
+ 		if(!core.chain_attack) {
+@@ -3645,8 +3678,11 @@ bool field::process(Processors::AddChain& arg) {
+ 			pduel->lua->add_param<LuaParam::EFFECT>(peff);
+ 			pduel->lua->add_param<LuaParam::EFFECT>(clit.triggering_effect);
+ 			pduel->lua->add_param<LuaParam::INT>(clit.triggering_player);
+-			if(!pduel->lua->check_condition(peff->target, 3))
+-				continue;
++			{
++				dm_scope cost_scope(core.dm_cost_check);
++				if(!pduel->lua->check_condition(peff->target, 3))
++					continue;
++			}
+ 			if(peff->operation) {
+ 				core.sub_solving_event.push_back(clit.evt);
+ 				emplace_process<Processors::ExecuteOperation>(peff, clit.triggering_player);
+@@ -3678,7 +3714,7 @@ bool field::process(Processors::AddChain& arg) {
+ 				loc = peffect->get_value();
+ 				if(!loc)
+ 					return TRUE;
+-			} else if(phandler->current.location == LOCATION_HAND) {
++			} else if(phandler->effective_location() == LOCATION_HAND) {
+ 				if(phandler->data.type & TYPE_PENDULUM) {
+ 					loc = LOCATION_PZONE;
+ 				} else if(phandler->data.type & TYPE_FIELD) {
+@@ -5009,6 +5045,10 @@ bool field::process(Processors::Adjust& arg) {
+ bool field::process(Processors::Startup& arg) {
+ 	switch(arg.step) {
+ 	case 0: {
++		for(auto& pl : player) {
++			if(pl.deck_master)
++				dmz_hint(pl.deck_master, HINT_DMZ);
++		}
+ 		core.shuffle_hand_check[0] = false;
+ 		core.shuffle_hand_check[1] = false;
+ 		core.shuffle_deck_check[0] = false;
+@@ -5219,3 +5259,63 @@ bool field::process(Processors::RefreshRelay& arg) {
+ 		return TRUE;
+ 	}
+ }
++// Domain: right before the game state is open again, each player whose Deck Master changed zone type
++// since the last open game state (turn player first) may return it to the Deck Master Zone.
++// The return does not start a chain; the events it raises are handled by a new PointEvent.
++bool field::process(Processors::DomainReturn& arg) {
++	const uint8_t playerid = (arg.check_index == 0) ? infos.turn_player : 1 - infos.turn_player;
++	switch(arg.step) {
++	case 0: {
++		if(arg.check_index > 1) {
++			if(arg.returned)
++				emplace_process<Processors::PointEvent>(false, true, false);
++			return TRUE;
++		}
++		auto& cur_player = player[playerid];
++		card* dm = cur_player.deck_master;
++		const bool moved = cur_player.dm_moved;
++		cur_player.dm_moved = false;
++		if(!moved || !dm || dm->in_dmz || dm->overlay_target || dm->current.location == 0
++			|| (dm->current.location & (LOCATION_ONFIELD | LOCATION_OVERLAY))) {
++			++arg.check_index;
++			arg.step = Processors::restart;
++			return FALSE;
++		}
++		emplace_process<Processors::SelectEffectYesNo>(playerid, 7112, dm);
++		return FALSE;
++	}
++	case 1: {
++		if(returns.at<int32_t>(0)) {
++			card* dm = player[playerid].deck_master;
++			const uint8_t oloc = dm->current.location;
++			dm->current.reason = REASON_RULE;
++			dm->current.reason_effect = nullptr;
++			dm->current.reason_player = playerid;
++			auto message = pduel->new_message(MSG_MOVE);
++			message->write<uint32_t>(dm->data.code);
++			message->write(dm->get_info_location());
++			dmz_enter(dm);
++			++player[playerid].dm_returns;
++			message->write(dm->get_info_location());
++			message->write<uint32_t>(dm->current.reason);
++			dmz_hint(dm, HINT_DMZ);
++			if(oloc == LOCATION_DECK)
++				shuffle(playerid, LOCATION_DECK);
++			if(oloc == LOCATION_GRAVE) {
++				raise_single_event(dm, nullptr, EVENT_LEAVE_GRAVE, nullptr, REASON_RULE, playerid, 0, 0);
++				raise_event(dm, EVENT_LEAVE_GRAVE, nullptr, REASON_RULE, playerid, 0, 0);
++			}
++			raise_single_event(dm, nullptr, EVENT_MOVE, nullptr, REASON_RULE, playerid, 0, 0);
++			raise_event(dm, EVENT_MOVE, nullptr, REASON_RULE, playerid, 0, 0);
++			process_single_event();
++			process_instant_event();
++			adjust_instant();
++			arg.returned = true;
++		}
++		++arg.check_index;
++		arg.step = Processors::restart;
++		return FALSE;
++	}
++	}
++	return TRUE;
++}
+diff --git a/ocgcore/processor_unit.h b/ocgcore/processor_unit.h
+index df24776a..88592046 100644
+--- a/ocgcore/processor_unit.h
++++ b/ocgcore/processor_unit.h
+@@ -743,6 +743,12 @@ struct RefreshRelay : public Process<false> {
+ 	RefreshRelay(uint16_t step_) :
+ 		Process(step_) {}
+ };
++struct DomainReturn : public Process<false> {
++	uint8_t check_index;
++	bool returned;
++	DomainReturn(uint16_t step_) :
++		Process(step_), check_index(0), returned(false) {}
++};
+ 
+ using processors = std::variant<Adjust, Turn, RefreshLoc, Startup,
+ 	SelectBattleCmd, SelectIdleCmd, SelectEffectYesNo, SelectYesNo,
+@@ -760,7 +766,7 @@ using processors = std::variant<Adjust, Turn, RefreshLoc, Startup,
+ 	PayLPCost, RemoveCounter, AttackDisable, AnnounceRace, AnnounceAttribute,
+ 	AnnounceCard, AnnounceNumber, TossCoin, TossDice, RockPaperScissors,
+ 	SelectFusion, DiscardHand, DiscardDeck, SortDeck, RemoveOverlay, XyzOverlay,
+-	RefreshRelay>;
++	RefreshRelay, DomainReturn>;
+ 
+ /*
+ * Hack to make the code compile with gcc in debug mode by having
+diff --git a/tests/domain/__pycache__/domain_scenarios.cpython-313.pyc b/tests/domain/__pycache__/domain_scenarios.cpython-313.pyc
+new file mode 100644
+index 00000000..f008069a
+Binary files /dev/null and b/tests/domain/__pycache__/domain_scenarios.cpython-313.pyc differ
+diff --git a/tests/domain/__pycache__/random_duels.cpython-313.pyc b/tests/domain/__pycache__/random_duels.cpython-313.pyc
+new file mode 100644
+index 00000000..655d2299
+Binary files /dev/null and b/tests/domain/__pycache__/random_duels.cpython-313.pyc differ
+diff --git a/tests/domain/build_core.py b/tests/domain/build_core.py
+new file mode 100644
+index 00000000..ef031101
+--- /dev/null
++++ b/tests/domain/build_core.py
+@@ -0,0 +1,74 @@
++#!/usr/bin/env python3
++"""Incremental build of libocgcore.so from this worktree's ocgcore/ for the Domain tests.
++
++Same flags as the CardScripts `loadcheck.py setup` build (C++17, -fno-rtti, hidden
++visibility), plus the warnings of the client build (-Wall -Wextra -pedantic). Only two
++compiler jobs run at a time. Output: $EDOPRO_CACHE/libocgcore.so (default
++/tmp/claude-0/cache-core), the library the CardScripts duel tools load.
++
++  build_core.py            # rebuild what changed
++  build_core.py --clean    # rebuild everything
++"""
++import concurrent.futures as cf
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[2] / "ocgcore"
++CACHE = Path(os.environ.get("EDOPRO_CACHE", "/tmp/claude-0/cache-core"))
++OBJ = CACHE / "obj-domain"
++LIB = CACHE / "libocgcore.so"
++LUA = ROOT / "lua" / "src"
++LUA_EXCLUDE = {"lbitlib", "lcorolib", "ldblib", "linit", "loadlib", "loslib", "ltests", "lua", "luac",
++               "lutf8lib", "onelua"}
++JOBS = 2
++
++
++def jobs(clean):
++	OBJ.mkdir(parents=True, exist_ok=True)
++	headers = max(p.stat().st_mtime for p in list(ROOT.glob("*.h")) + list(ROOT.glob("RNG/*.hpp")))
++	out = []
++	conf = ROOT / "lua" / "luaconf-customize.h"
++	for f in sorted(LUA.glob("*.c")):
++		if f.stem in LUA_EXCLUDE:
++			continue
++		o = OBJ / f"lua_{f.stem}.o"
++		if clean or not o.exists() or o.stat().st_mtime < f.stat().st_mtime:
++			cmd = ["g++", "-x", "c++", "-O2", "-fPIC", "-I", str(LUA)]
++			if conf.is_file():
++				cmd += ["-include", str(conf)]
++			out.append((f, cmd + ["-c", str(f), "-o", str(o)]))
++	for f in sorted(list(ROOT.glob("*.cpp")) + list(ROOT.glob("RNG/*.cpp"))):
++		o = OBJ / f"core_{f.stem}.o"
++		if clean or not o.exists() or o.stat().st_mtime < max(f.stat().st_mtime, headers):
++			out.append((f, ["g++", "-std=c++17", "-O2", "-fPIC", "-fno-rtti", "-DOCGCORE_EXPORT_FUNCTIONS",
++			                "-fvisibility=hidden", "-Wall", "-Wextra", "-pedantic", "-Wno-unused-parameter",
++			                "-I", str(LUA), "-c", str(f), "-o", str(o)]))
++	return out
++
++
++def known_warning(src, line):
++	"""Warnings already present before the Domain work (MASQPro summon messages)."""
++	return src.name == "operations.cpp" and "unused variable" in line and "message" in line
++
++
++def main():
++	todo = jobs("--clean" in sys.argv)
++	warnings = []
++	with cf.ThreadPoolExecutor(max_workers=JOBS) as ex:
++		for (src, _), r in zip(todo, ex.map(lambda j: subprocess.run(j[1], capture_output=True, text=True), todo)):
++			if r.returncode != 0:
++				sys.exit(f"compile failed: {src}\n{r.stderr[-4000:]}")
++			if src.parent.name != "src":
++				warnings += [w for w in r.stderr.splitlines() if "warning:" in w and not known_warning(src, w)]
++	subprocess.run(["g++", "-shared", "-o", str(LIB), *map(str, sorted(OBJ.glob("*.o"))),
++	                "-static-libgcc", "-static-libstdc++", "-Wl,--no-undefined"], check=True)
++	print(f"built {LIB} ({len(todo)} files compiled)")
++	if warnings:
++		print("NEW WARNINGS:\n" + "\n".join(warnings))
++		sys.exit(2)
++
++
++if __name__ == "__main__":
++	main()
+diff --git a/tests/domain/domain_scenarios.py b/tests/domain/domain_scenarios.py
+new file mode 100644
+index 00000000..c1e32e2c
+--- /dev/null
++++ b/tests/domain/domain_scenarios.py
+@@ -0,0 +1,775 @@
++#!/usr/bin/env python3
++"""Scenario tests of the Domain format's Deck Master Zone (ocgcore).
++
++Real duels on the libocgcore.so built from this worktree, driven by the CardScripts duel
++tooling (duelsim.py / scenario.py, used unmodified):
++
++  export EDOPRO_CORE=/home/user/wt/core/ocgcore EDOPRO_CACHE=/tmp/claude-0/cache-core \
++         EDOPRO_CDB=/tmp/claude-0/genesys/BabelCDB
++  python3 tests/domain/build_core.py           # builds $EDOPRO_CACHE/libocgcore.so
++  python3 tests/domain/domain_scenarios.py     # every test
++  python3 tests/domain/domain_scenarios.py normal_summon_from_dmz ...
++
++EDOPRO_TOOLS can point to another copy of the tools folder.
++"""
++import os
++import struct
++import sys
++from pathlib import Path
++
++TOOLS = Path(os.environ.get("EDOPRO_TOOLS",
++                            "/home/user/zedja123/cardscripts/.claude/skills/edopro-card-scripting/tools"))
++sys.path.insert(0, str(TOOLS))
++from duelsim import DUEL_MODE_MR5, DUEL_PSEUDO_SHUFFLE, Duel, i32  # noqa: E402
++from scenario import (Act, Answer, Phase, Pick, Step, Summon, TestFailure, activatable, begin,  # noqa: E402
++                      expect, filler, lua_bool, lua_val, play, prompts, run_tests, test)
++
++DUEL_DOMAIN = 0x2000000000
++DUEL_MODE_DOMAIN = DUEL_MODE_MR5 | DUEL_DOMAIN
++LOCATION_DECK_MASTER = 0x40000000
++DMZ_SEQUENCE = 0xFF
++HINT_DMZ, HINT_DMZ_REMOVE = 204, 205
++DESC_RETURN = 7112
++MSG_PAY_LPCOST = 100
++POS_FACEDOWN = 0x0A
++
++# cards
++FILLER = 89631139            # Blue-Eyes White Dragon (Level 8 Normal)
++GENE_WARPED = 69247929       # Gene-Warped Warwolf (Level 4 Normal)
++SUMMONED_SKULL = 70781052    # Level 6 Normal
++LINK_SPIDER = 98978921       # 1 Normal Monster
++UTOPIA = 84013237            # Number 39: Utopia, 2 Level 4 monsters
++UTOPIA_RAY_V = 66970002      # Number C39: Utopia Ray V (Rank 5)
++QUICK_CHAOS = 33252803       # Rank-Up-Magic Quick Chaos
++ABC = 1561110                # ABC-Dragon Buster
++A_CORE, B_DRAKE, C_WYVERN = 30012506, 77411244, 3405259
++JESTER = 8487449             # Jester Confit
++INSTANT_FUSION = 1845204
++POLYMERIZATION = 24094653
++FLAME_SWORDSMAN = 45231177   # Level 5 Fusion: Flame Manipulator + Masaki
++FLAME_MANIPULATOR, MASAKI = 34460851, 44287299
++RELINQUISHED = 64631466      # Level 1 Ritual
++BLACK_ILLUSION = 41426869    # its Ritual Spell
++ODD_EYES = 16178681          # Odd-Eyes Pendulum Dragon, Level 7, scale 4
++STARGAZER, TIMEGAZER = 94415058, 20409757   # scales 1 and 8
++SK_GATE_INFINITY = 22211622  # scale 13
++WAKING = 10813327            # Waking the Dragon
++ANCIENT_RULES = 10667321
++MST = 5318639
++MAGNAMHUT = 33854624         # Bystial Magnamhut
++NEPTUNE = 88071625           # The Tyrant Neptune
++DARK_HOLE = 53129443
++REBORN = 83764718
++SPELL_ECONOMICS = 4259068
++CHAIN_ENERGY = 79323590
++GRACEFUL_CHARITY = 79571449
++DARK_MAGICIAN = 46986414
++ODD_EYES_VENOM = 45014450    # Fusion Pendulum, Level 10
++TENSU = 10719350             # Fire Formation - Tensu: extra Normal Summon of a Beast-Warrior
++
++
++# ---------------------------------------------------------------- helpers
++def domain_duel(seed=1, lp=8000):
++	return Duel(seed=seed, flags=DUEL_MODE_DOMAIN | DUEL_PSEUDO_SHUFFLE, lp=lp)
++
++
++def add_dm(d, code, player=0):
++	d.add(code, player, LOCATION_DECK_MASTER, pos=POS_FACEDOWN)
++
++
++def setup_lua(d, code):
++	d.lua(code, "setup.lua")
++
++
++def is_dmz(x):
++	return x["loc"] == 0 and x["seq"] == DMZ_SEQUENCE
++
++
++def idle_entries(d, kind, code):
++	m = d.pending
++	expect(m is not None and m.name == "SELECT_IDLECMD", f"not at an idle prompt: {m and m.name}")
++	return [x for x in m.data[kind] if x["code"] == code]
++
++
++def dmz_entry(d, kind, code):
++	"""The idle-command entry of the Deck Master in the Deck Master Zone, or None."""
++	for x in idle_entries(d, kind, code):
++		if is_dmz(x):
++			return x
++	return None
++
++
++def hints(d, htype, start=0):
++	return [m for m in d.messages[start:] if m.name == "HINT" and m.data.get("htype") == htype]
++
++
++def moves(d, code, start=0):
++	return [m for m in d.messages[start:] if m.name == "MOVE" and m.data.get("code") == code]
++
++
++def lp(d, p=0):
++	return d.state()["lp"][p]
++
++
++def lp_costs(d, start=0):
++	out = []
++	for m in d.messages[start:]:
++		if m.type == MSG_PAY_LPCOST:
++			out.append((m.raw[0], struct.unpack_from("<I", m.raw, 1)[0]))
++	return out
++
++
++def in_dmz(d, code, player=0):
++	"""The last move of `code` brought it into the Deck Master Zone (or it never moved and was loaded there)."""
++	mv = moves(d, code)
++	if not mv:
++		return any(m.data["hdata"] & 0xFFFFFFFF == code and m.data["player"] == player for m in hints(d, HINT_DMZ))
++	cur = mv[-1].data["cur"]
++	return cur["loc"] == 0 and cur["seq"] == DMZ_SEQUENCE and cur["con"] == player
++
++
++def selectable_codes(m):
++	if m.name == "SELECT_UNSELECT_CARD":
++		return [(x["code"], x["loc"], x["seq"]) for x in m.data["select"] + m.data["unselect"]]
++	return [(x["code"], x["loc"], x["seq"]) for x in m.data.get("cards", [])]
++
++
++class PickDMZ(Step):
++	"""Pick the Deck Master Zone card `code` (location 0, sequence 0xFF) in a card selection."""
++	def __init__(self, code, player=0):
++		self.code, self.player = code, player
++
++	def apply(self, duel, m):
++		if m.player != self.player or m.name not in ("SELECT_CARD", "SELECT_UNSELECT_CARD"):
++			return None
++		lst = m.data["cards"] if m.name == "SELECT_CARD" else m.data["select"]
++		for i, x in enumerate(lst):
++			if x["code"] == self.code and is_dmz(x):
++				if m.name == "SELECT_CARD":
++					return struct.pack("<iI", 0, 1) + struct.pack("<I", i)
++				return struct.pack("<ii", 1, i)
++		raise TestFailure(f"Deck Master {self.code} not selectable: {selectable_codes(m)}")
++
++
++class SummonFrom(Step):
++	"""Normal Summon the copy of `code` that is in location `loc` (0 = Deck Master Zone)."""
++	def __init__(self, code, loc, player=0):
++		self.code, self.loc, self.player = code, loc, player
++
++	def apply(self, duel, m):
++		if m.name != "SELECT_IDLECMD" or m.player != self.player:
++			return None
++		for i, x in enumerate(m.data["summon"]):
++			if x["code"] == self.code and x["loc"] == self.loc:
++				return struct.pack("<i", (i << 16) | 0)
++		raise TestFailure(f"{self.code} not summonable from {self.loc}")
++
++
++class Finish(Step):
++	def __init__(self, player=0):
++		self.player = player
++
++	def apply(self, duel, m):
++		if m.player == self.player and m.name == "SELECT_UNSELECT_CARD" and m.data["finishable"]:
++			return i32(-1)
++		return None
++
++
++def return_prompts(d, player=0, start=0):
++	return [m for m in d.messages[start:] if m.name == "SELECT_EFFECTYN" and m.player == player
++	        and m.data["desc"] == DESC_RETURN]
++
++
++def mz(code, seq, player=0, pos="POS_FACEUP_ATTACK", proc=True):
++	return f"Debug.AddCard({code},{player},{player},LOCATION_MZONE,{seq},{pos},{'true' if proc else 'false'})\n"
++
++
++# ---------------------------------------------------------------- loading and hints
++@test
++def dm_hint_at_start():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED, 0)
++	add_dm(d, SUMMONED_SKULL, 1)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	h = hints(d, HINT_DMZ)
++	got = sorted((m.data["player"], m.data["hdata"]) for m in h)
++	expect(got == [(0, GENE_WARPED), (1, SUMMONED_SKULL)], f"HINT_DMZ at start: {got}")
++	first_draw_or_turn = next(i for i, m in enumerate(d.messages) if m.name in ("NEW_TURN", "MOVE"))
++	expect(all(d.messages.index(m) < first_draw_or_turn for m in h), "HINT_DMZ not sent before the duel starts")
++	expect(lua_val(d, "Duel.GetFieldGroupCount(0,LOCATION_HAND,0)") == "0", "DM counted in the hand")
++	return d
++
++
++@test
++def dm_ignored_without_domain_flag():
++	d = Duel(seed=1, flags=DUEL_MODE_MR5 | DUEL_PSEUDO_SHUFFLE)
++	add_dm(d, GENE_WARPED, 0)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(not hints(d, HINT_DMZ), "HINT_DMZ without DUEL_DOMAIN")
++	expect(not idle_entries(d, "summon", GENE_WARPED), "DM summonable without DUEL_DOMAIN")
++	return d
++
++
++@test
++def spell_or_second_dm_ignored():
++	d = domain_duel()
++	add_dm(d, DARK_HOLE, 0)          # not a monster: ignored
++	add_dm(d, GENE_WARPED, 0)        # the Deck Master
++	add_dm(d, SUMMONED_SKULL, 0)     # a second one: ignored
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	got = [(m.data["player"], m.data["hdata"]) for m in hints(d, HINT_DMZ)]
++	expect(got == [(0, GENE_WARPED)], f"HINT_DMZ: {got}")
++	return d
++
++
++# ---------------------------------------------------------------- Normal/Tribute Summon and Set
++@test
++def normal_summon_from_dmz():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	x = dmz_entry(d, "summon", GENE_WARPED)
++	expect(x is not None and x["con"] == 0, f"DM not in the summon list as (0,0,0xFF): {idle_entries(d, 'summon', GENE_WARPED)}")
++	n0 = len(d.messages)
++	play(d, [Summon(GENE_WARPED, "summon")])
++	expect(GENE_WARPED in d.codes(0, "mzone"), "DM not Normal Summoned")
++	mv = moves(d, GENE_WARPED, n0)
++	expect(mv and mv[0].data["prev"]["loc"] == 0 and mv[0].data["prev"]["seq"] == DMZ_SEQUENCE,
++	       f"MSG_MOVE previous location is not the DMZ: {mv and mv[0].data}")
++	rm = hints(d, HINT_DMZ_REMOVE, n0)
++	expect(rm and d.messages.index(rm[0]) > d.messages.index(mv[0]), "HINT_DMZ_REMOVE missing or before the MSG_MOVE")
++	expect(lp(d) == 8000 and not lp_costs(d, n0), "first summon from the DMZ is not free")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{GENE_WARPED}):IsSummonLocation(LOCATION_HAND)"),
++	       "summon location is not the hand")
++	expect(not return_prompts(d), "return offered after a summon")
++	return d
++
++
++@test
++def tribute_summon_from_dmz():
++	d = domain_duel()
++	add_dm(d, SUMMONED_SKULL)
++	setup_lua(d, mz(GENE_WARPED, 2))
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "summon", SUMMONED_SKULL), "Level 6 DM not Tribute Summonable")
++	play(d, [Summon(SUMMONED_SKULL, "summon"), Pick(GENE_WARPED)])
++	expect(SUMMONED_SKULL in d.codes(0, "mzone"), "DM not Tribute Summoned")
++	expect(GENE_WARPED in d.codes(0, "grave"), "tribute not in the GY")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{SUMMONED_SKULL}):IsSummonType(SUMMON_TYPE_TRIBUTE)"),
++	       "not a Tribute Summon")
++	return d
++
++
++@test
++def tribute_summon_needs_tributes():
++	d = domain_duel()
++	add_dm(d, SUMMONED_SKULL)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(not dmz_entry(d, "summon", SUMMONED_SKULL), "Level 6 DM summonable with no tribute")
++	expect(not dmz_entry(d, "mset", SUMMONED_SKULL), "Level 6 DM settable with no tribute")
++	return d
++
++
++@test
++def set_from_dmz():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "mset", GENE_WARPED), "DM not in the Set list")
++	expect(not dmz_entry(d, "sset", GENE_WARPED), "DM in the Spell/Trap Set list")
++	play(d, [Summon(GENE_WARPED, "mset")])
++	st = d.state()
++	got = [c for c in st[(0, "mzone")] if c["code"] == GENE_WARPED]
++	expect(got and got[0]["pos"] == 8, f"DM not Set face-down: {got}")
++	return d
++
++
++# ---------------------------------------------------------------- own procedures
++@test
++def link_summon_from_dmz_to_emz():
++	d = domain_duel()
++	add_dm(d, LINK_SPIDER)
++	setup_lua(d, mz(GENE_WARPED, 2))
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "spsummon", LINK_SPIDER), "Link DM not Special Summonable from the DMZ")
++	play(d, [Summon(LINK_SPIDER), Pick(GENE_WARPED)])
++	st = d.state()
++	got = [c for c in st[(0, "mzone")] if c["code"] == LINK_SPIDER]
++	expect(got, "Link DM not summoned")
++	expect(got[0]["seq"] in (5, 6), f"Link DM not placed in an Extra Monster Zone: seq {got[0]['seq']}")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{LINK_SPIDER}):IsSummonLocation(LOCATION_EXTRA)"),
++	       "summon location is not the Extra Deck")
++	return d
++
++
++@test
++def xyz_summon_from_dmz_keeps_materials():
++	d = domain_duel()
++	add_dm(d, UTOPIA)
++	setup_lua(d, mz(GENE_WARPED, 1) + mz(GENE_WARPED, 3))
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "spsummon", UTOPIA), "Xyz DM not Special Summonable from the DMZ")
++	n0 = len(d.messages)
++	play(d, [Summon(UTOPIA), Pick(GENE_WARPED, GENE_WARPED)])
++	st = d.state()
++	got = [c for c in st[(0, "mzone")] if c["code"] == UTOPIA]
++	expect(got and got[0]["overlay"] == 2, f"Xyz DM not summoned with 2 materials: {got}")
++	att = [m for m in moves(d, GENE_WARPED, n0) if m.data["cur"]["loc"] & 0x80]
++	expect(att and all(m.data["cur"]["con"] == 0 and m.data["cur"]["seq"] == DMZ_SEQUENCE for m in att),
++	       f"materials not attached to the DMZ card (0,0x80,0xFF): {[m.data['cur'] for m in att]}")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{UTOPIA}):IsSummonType(SUMMON_TYPE_XYZ)"),
++	       "not an Xyz Summon")
++	return d
++
++
++@test
++def contact_fusion_abc_from_dmz():
++	d = domain_duel()
++	add_dm(d, ABC)
++	for c in (A_CORE, B_DRAKE, C_WYVERN):
++		d.add(c, 0, "grave")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "spsummon", ABC), "ABC-Dragon Buster not Contact Fusion summonable from the DMZ")
++	play(d, [Summon(ABC), Pick(A_CORE, B_DRAKE, C_WYVERN)])
++	expect(ABC in d.codes(0, "mzone"), "ABC-Dragon Buster not summoned")
++	expect({A_CORE, B_DRAKE, C_WYVERN} <= set(d.codes(0, "removed")), "materials not banished")
++	return d
++
++
++@test
++def jester_confit_procedure_from_dmz():
++	d = domain_duel()
++	add_dm(d, JESTER)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "spsummon", JESTER), "Jester Confit's hand procedure not available from the DMZ")
++	play(d, [Summon(JESTER)])
++	expect(JESTER in d.codes(0, "mzone"), "Jester Confit not summoned")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{JESTER}):IsSummonLocation(LOCATION_HAND)"),
++	       "summon location is not the hand")
++	return d
++
++
++# ---------------------------------------------------------------- proper summons by effects
++@test
++def instant_fusion_summons_extra_dm():
++	d = domain_duel()
++	add_dm(d, FLAME_SWORDSMAN)
++	d.add(INSTANT_FUSION, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect((INSTANT_FUSION, 0) in [(c, i) for c, i in activatable(d)] or INSTANT_FUSION in [c for c, _ in activatable(d)],
++	       f"Instant Fusion not activatable with a Fusion DM: {activatable(d)}")
++	play(d, [Act(INSTANT_FUSION), PickDMZ(FLAME_SWORDSMAN)])
++	expect(FLAME_SWORDSMAN in d.codes(0, "mzone"), "Fusion DM not summoned by Instant Fusion")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{FLAME_SWORDSMAN}):IsSummonLocation(LOCATION_EXTRA)"),
++	       "summon location is not the Extra Deck")
++	expect(lp(d) == 7000, f"LP {lp(d)} (expected 7000: Instant Fusion only)")
++	return d
++
++
++@test
++def polymerization_picks_extra_dm():
++	d = domain_duel()
++	add_dm(d, FLAME_SWORDSMAN)
++	for c in (POLYMERIZATION, FLAME_MANIPULATOR, MASAKI):
++		d.add(c, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Act(POLYMERIZATION), PickDMZ(FLAME_SWORDSMAN), Pick(FLAME_MANIPULATOR, MASAKI)])
++	expect(FLAME_SWORDSMAN in d.codes(0, "mzone"), "Fusion DM not Fusion Summoned")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{FLAME_SWORDSMAN}):IsSummonType(SUMMON_TYPE_FUSION)"),
++	       "not a Fusion Summon")
++	return d
++
++
++@test
++def ritual_spell_summons_ritual_dm():
++	d = domain_duel()
++	add_dm(d, RELINQUISHED)
++	d.add(BLACK_ILLUSION, 0, "hand")
++	d.add(GENE_WARPED, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Act(BLACK_ILLUSION), PickDMZ(RELINQUISHED), Pick(GENE_WARPED)])
++	expect(RELINQUISHED in d.codes(0, "mzone"), "Ritual DM not Ritual Summoned")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{RELINQUISHED}):IsSummonType(SUMMON_TYPE_RITUAL)"),
++	       "not a Ritual Summon")
++	return d
++
++
++@test
++def rank_up_quick_chaos_onto_number():
++	d = domain_duel()
++	add_dm(d, UTOPIA_RAY_V)
++	setup_lua(d, f"local c=Debug.AddCard({UTOPIA},0,0,LOCATION_MZONE,2,POS_FACEUP_ATTACK,true)\nDebug.PreSummon(c,SUMMON_TYPE_XYZ)\n")
++	d.add(QUICK_CHAOS, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Act(QUICK_CHAOS), Pick(UTOPIA), PickDMZ(UTOPIA_RAY_V)])
++	st = d.state()
++	got = [c for c in st[(0, "mzone")] if c["code"] == UTOPIA_RAY_V]
++	expect(got and got[0]["overlay"] == 1, f"Number C39 DM not Xyz Summoned onto Utopia: {st[(0, 'mzone')]}")
++	return d
++
++
++# ---------------------------------------------------------------- Pendulum
++@test
++def pendulum_scale_from_dmz():
++	d = domain_duel()
++	add_dm(d, ODD_EYES)
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	acts = [x for x in d.pending.data["activate"] if x["code"] == ODD_EYES]
++	expect(acts and is_dmz(acts[0]), f"Pendulum activation from the DMZ not offered: {acts}")
++	play(d, [Act(ODD_EYES)])
++	st = d.state()
++	expect(any(c["code"] == ODD_EYES for c in st[(0, "szone")]), "Odd-Eyes not placed in a Pendulum Zone")
++	expect(lua_bool(d, f"Duel.GetFieldCard(0,LOCATION_PZONE,0) and Duel.GetFieldCard(0,LOCATION_PZONE,0):IsCode({ODD_EYES})")
++	       or lua_bool(d, f"Duel.GetFieldCard(0,LOCATION_PZONE,1) and Duel.GetFieldCard(0,LOCATION_PZONE,1):IsCode({ODD_EYES})"),
++	       "not in a Pendulum Zone")
++	return d
++
++
++def pendulum_board(dm, rscale=TIMEGAZER):
++	d = domain_duel()
++	add_dm(d, dm)
++	setup_lua(d, f"Debug.AddCard({STARGAZER},0,0,LOCATION_PZONE,0,POS_FACEUP_ATTACK)\n"
++	             f"Debug.AddCard({rscale},0,0,LOCATION_PZONE,1,POS_FACEUP_ATTACK)\n")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	return d
++
++
++@test
++def pendulum_summon_main_deck_dm():
++	d = pendulum_board(ODD_EYES)
++	expect(any(x["code"] == STARGAZER for x in d.pending.data["spsummon"]), "Pendulum Summon not available with the DM")
++	play(d, [Summon(STARGAZER), PickDMZ(ODD_EYES)])
++	expect(ODD_EYES in d.codes(0, "mzone"), "DM not Pendulum Summoned")
++	expect(lua_bool(d, f"Duel.GetFirstMatchingCard(Card.IsCode,0,LOCATION_MZONE,0,nil,{ODD_EYES}):IsSummonType(SUMMON_TYPE_PENDULUM)"),
++	       "not a Pendulum Summon")
++	return d
++
++
++@test
++def tyrant_neptune_not_pendulum_summonable():
++	d = pendulum_board(NEPTUNE, rscale=SK_GATE_INFINITY)
++	expect(not any(x["code"] == STARGAZER for x in d.pending.data["spsummon"]),
++	       "Pendulum Summon offered with only The Tyrant Neptune as candidate")
++	# control: a Main Deck DM within the same scales
++	d2 = pendulum_board(ODD_EYES, rscale=SK_GATE_INFINITY)
++	expect(any(x["code"] == STARGAZER for x in d2.pending.data["spsummon"]), "control: Pendulum Summon not offered")
++	return d
++
++
++@test
++def extra_deck_pendulum_dm_not_pendulum_summoned():
++	d = pendulum_board(ODD_EYES_VENOM, rscale=SK_GATE_INFINITY)
++	expect(not any(x["code"] == STARGAZER for x in d.pending.data["spsummon"]),
++	       "Pendulum Summon offered for an Extra Deck Pendulum DM")
++	expect(not any(x["code"] == ODD_EYES_VENOM for x in d.pending.data["activate"]),
++	       "Extra Deck Pendulum DM can be activated as a Pendulum Scale")
++	return d
++
++
++# ---------------------------------------------------------------- what may not leave the DMZ
++@test
++def ancient_rules_does_not_see_dm():
++	d = domain_duel()
++	add_dm(d, SUMMONED_SKULL)
++	d.add(ANCIENT_RULES, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(ANCIENT_RULES not in [c for c, _ in activatable(d)], "Ancient Rules sees the DM as a hand card")
++	# control: the same monster in the hand
++	d2 = domain_duel()
++	d2.add(SUMMONED_SKULL, 0, "hand")
++	d2.add(ANCIENT_RULES, 0, "hand")
++	filler(d2, 0); filler(d2, 1)
++	begin(d2)
++	expect(ANCIENT_RULES in [c for c, _ in activatable(d2)], "control: Ancient Rules not activatable with the monster in hand")
++	return d
++
++
++@test
++def waking_the_dragon_does_not_see_dm():
++	d = domain_duel()
++	add_dm(d, FLAME_SWORDSMAN)
++	setup_lua(d, f"Debug.AddCard({WAKING},0,0,LOCATION_SZONE,1,POS_FACEDOWN_DEFENSE)\n"
++	             f"Debug.AddCard({MST},1,1,LOCATION_SZONE,1,POS_FACEDOWN_DEFENSE)\n")
++	d.add(GENE_WARPED, 0, "deck")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	n0 = len(d.messages)
++	play(d, [Phase("ep"), Act(MST, player=1), Pick(WAKING, player=1), Act(WAKING), Pick(GENE_WARPED)],
++	     stop="idle", player=1)
++	sel = [m for m in d.messages[n0:] if m.name == "SELECT_CARD" and m.player == 0]
++	expect(sel, "Waking the Dragon did not resolve")
++	expect(all(not any(x["code"] == FLAME_SWORDSMAN for x in m.data["cards"]) for m in sel),
++	       f"Waking the Dragon offered the DM: {[selectable_codes(m) for m in sel]}")
++	return d
++
++
++@test
++def bystial_cannot_summon_itself_from_dmz():
++	d = domain_duel()
++	add_dm(d, MAGNAMHUT)
++	d.add(DARK_MAGICIAN, 0, "grave")
++	setup_lua(d, mz(GENE_WARPED, 2))
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(MAGNAMHUT not in [c for c, _ in activatable(d)], "Bystial Magnamhut's own effect usable from the DMZ")
++	expect(dmz_entry(d, "summon", MAGNAMHUT), "Bystial Magnamhut cannot be Tribute Summoned from the DMZ")
++	# control: from the hand its effect is usable
++	d2 = domain_duel()
++	d2.add(MAGNAMHUT, 0, "hand")
++	d2.add(DARK_MAGICIAN, 0, "grave")
++	filler(d2, 0); filler(d2, 1)
++	begin(d2)
++	expect(MAGNAMHUT in [c for c, _ in activatable(d2)], "control: Bystial Magnamhut not usable from the hand")
++	return d
++
++
++@test
++def extra_deck_lock_applies_to_dm():
++	d = domain_duel()
++	add_dm(d, LINK_SPIDER)
++	setup_lua(d, mz(GENE_WARPED, 2))
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect(dmz_entry(d, "spsummon", LINK_SPIDER), "control: Link DM not summonable")
++	d.lua("""
++local e=Effect.GlobalEffect()
++e:SetType(EFFECT_TYPE_FIELD)
++e:SetCode(EFFECT_CANNOT_SPECIAL_SUMMON)
++e:SetProperty(EFFECT_FLAG_PLAYER_TARGET)
++e:SetTargetRange(1,0)
++e:SetTarget(function(e,c) return c:IsLocation(LOCATION_EXTRA) end)
++Duel.RegisterEffect(e,0)
++""", "lock.lua")
++	play(d, [Phase("ep")], stop="idle", player=1)
++	play(d, [Phase("ep", player=1)], stop="idle", player=0)
++	expect(not dmz_entry(d, "spsummon", LINK_SPIDER), "\"Cannot Special Summon from the Extra Deck\" does not apply to the DM")
++	return d
++
++
++@test
++def extra_normal_summon_reaches_dm():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	setup_lua(d, f"Debug.AddCard({TENSU},0,0,LOCATION_SZONE,2,POS_FACEUP_ATTACK)\n")
++	d.add(GENE_WARPED, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	expect([x for x in idle_entries(d, "summon", GENE_WARPED) if x["loc"] == 0x02], "hand copy not summonable")
++	play(d, [SummonFrom(GENE_WARPED, 0x02)])
++	expect(dmz_entry(d, "summon", GENE_WARPED), "Fire Formation - Tensu's extra Normal Summon does not reach the DM")
++	play(d, [Summon(GENE_WARPED, "summon")])
++	expect(d.codes(0, "mzone").count(GENE_WARPED) == 2, "DM not summoned with the extra Normal Summon")
++	return d
++
++
++@test
++def dm_not_in_hand_and_not_discardable():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	d.add(GRACEFUL_CHARITY, 0, "hand")
++	for _ in range(5):
++		d.add(SUMMONED_SKULL, 0, "deck")
++	filler(d, 1)
++	begin(d)
++	expect(lua_val(d, "Duel.GetFieldGroupCount(0,LOCATION_HAND,0)") == "1", "DM counted by GetFieldGroupCount(LOCATION_HAND)")
++	n0 = len(d.messages)
++	play(d, [Act(GRACEFUL_CHARITY)])
++	sel = [m for m in d.messages[n0:] if m.name == "SELECT_CARD" and m.player == 0]
++	expect(sel, "no discard selection")
++	expect(all(not any(x["code"] == GENE_WARPED for x in m.data["cards"]) for m in sel),
++	       f"DM offered as a discard: {[selectable_codes(m) for m in sel]}")
++	expect(dmz_entry(d, "summon", GENE_WARPED), "DM left the DMZ")
++	return d
++
++
++# ---------------------------------------------------------------- returning to the DMZ
++def summon_and_destroy(answer, dm=GENE_WARPED):
++	d = domain_duel()
++	add_dm(d, dm)
++	d.add(DARK_HOLE, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Summon(dm, "summon")])
++	n0 = len(d.messages)
++	steps = [Act(DARK_HOLE)]
++	if answer is not None:
++		steps.append(Answer(answer, desc=DESC_RETURN))
++	play(d, steps)
++	return d, n0
++
++
++@test
++def destroyed_dm_returns_and_costs_500():
++	d, n0 = summon_and_destroy(True)
++	expect(return_prompts(d, 0, n0), "no return prompt after the DM was destroyed")
++	mv = [m for m in moves(d, GENE_WARPED, n0) if m.data["cur"]["loc"] == 0]
++	expect(mv and mv[-1].data["prev"]["loc"] == 0x10 and mv[-1].data["cur"]["seq"] == DMZ_SEQUENCE
++	       and mv[-1].data["cur"]["pos"] == POS_FACEDOWN and mv[-1].data["cur"]["con"] == 0,
++	       f"return MSG_MOVE: {mv and mv[-1].data}")
++	h_ret = hints(d, HINT_DMZ, n0)
++	expect(h_ret and d.messages.index(h_ret[-1]) > d.messages.index(mv[-1]), "HINT_DMZ not after the MSG_MOVE")
++	expect(GENE_WARPED not in d.codes(0, "grave"), "DM still in the GY after returning")
++	expect(in_dmz(d, GENE_WARPED), "DM not moved to the DMZ")
++	h = hints(d, HINT_DMZ, n0)
++	expect(h and h[-1].data["hdata"] == GENE_WARPED | (1 << 32), f"HINT_DMZ with return count 1 missing: {[m.data for m in h]}")
++	# the Normal Summon of this turn is used: summon it again next turn
++	play(d, [Phase("ep")], stop="idle", player=1)
++	play(d, [Phase("ep", player=1)], stop="idle", player=0)
++	expect(dmz_entry(d, "summon", GENE_WARPED), "DM not summonable again")
++	n1 = len(d.messages)
++	play(d, [Summon(GENE_WARPED, "summon")])
++	expect(GENE_WARPED in d.codes(0, "mzone"), "DM not summoned again")
++	expect(lp_costs(d, n1) == [(0, 500)] and lp(d) == 7500, f"second summon cost {lp_costs(d, n1)}, LP {lp(d)}")
++	return d
++
++
++@test
++def declined_dm_stays_in_gy():
++	d, n0 = summon_and_destroy(False)
++	expect(len(return_prompts(d, 0, n0)) == 1, "no single return prompt")
++	expect(GENE_WARPED in d.codes(0, "grave"), "declined DM not in the GY")
++	n1 = len(d.messages)
++	# next open game states (opponent's turn, own next turn): no new prompt
++	play(d, [Phase("ep")], stop="idle", player=1)
++	play(d, [Phase("ep", player=1)], stop="idle", player=0)
++	expect(not return_prompts(d, 0, n1), "return offered again without a new zone change")
++	expect(GENE_WARPED in d.codes(0, "grave"), "DM left the GY")
++	return d
++
++
++@test
++def declined_dm_offered_again_after_moving():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	d.add(DARK_HOLE, 0, "hand"); d.add(REBORN, 0, "hand"); d.add(DARK_HOLE, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Summon(GENE_WARPED, "summon"), Act(DARK_HOLE), Answer(False, desc=DESC_RETURN)])
++	n1 = len(d.messages)
++	play(d, [Act(REBORN), Pick(GENE_WARPED)])
++	expect(GENE_WARPED in d.codes(0, "mzone"), "Monster Reborn failed")
++	expect(not return_prompts(d, 0, n1), "return offered while the DM is on the field")
++	play(d, [Act(DARK_HOLE), Answer(True, desc=DESC_RETURN)])
++	expect(return_prompts(d, 0, n1), "return not offered after the DM moved again")
++	expect(in_dmz(d, GENE_WARPED), "DM not returned")
++	return d
++
++
++@test
++def return_raises_leave_grave_for_owner():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	d.add(DARK_HOLE, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	d.lua("""
++local e=Effect.GlobalEffect()
++e:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_CONTINUOUS)
++e:SetCode(EVENT_LEAVE_GRAVE)
++e:SetOperation(function(e,tp,eg,ep,ev,re,r,rp) Debug.Message('LG|'..eg:GetFirst():GetCode()..'|'..rp..'|'..r) end)
++Duel.RegisterEffect(e,0)
++""", "watch.lua")
++	begin(d)
++	play(d, [Summon(GENE_WARPED, "summon"), Act(DARK_HOLE), Answer(True, desc=DESC_RETURN)])
++	lg = [x for x in d.script_log if x.startswith("LG|")]
++	expect(lg == [f"LG|{GENE_WARPED}|0|{0x400}"], f"EVENT_LEAVE_GRAVE of the return: {lg}")
++	return d
++
++
++@test
++def opponent_reborn_gives_no_prompt():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	d.add(DARK_HOLE, 0, "hand")
++	setup_lua(d, f"Debug.AddCard({REBORN},1,1,LOCATION_SZONE,1,POS_FACEDOWN_DEFENSE)\n")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Summon(GENE_WARPED, "summon"), Act(DARK_HOLE)])
++	# the default policy declined; the opponent takes it with Monster Reborn on their turn
++	n1 = len(d.messages)
++	play(d, [Phase("ep")], stop="idle", player=1)
++	play(d, [Act(REBORN, player=1), Pick(GENE_WARPED, player=1)], stop="idle", player=1)
++	expect(GENE_WARPED in d.codes(1, "mzone"), "opponent did not Special Summon the DM")
++	expect(not return_prompts(d, 0, n1), "return offered after the opponent took the DM")
++	return d
++
++
++@test
++def spell_economics_does_not_remove_cost():
++	d = domain_duel()
++	add_dm(d, FLAME_SWORDSMAN)
++	setup_lua(d, f"Debug.AddCard({SPELL_ECONOMICS},0,0,LOCATION_SZONE,2,POS_FACEUP_ATTACK)\n")
++	d.add(INSTANT_FUSION, 0, "hand"); d.add(DARK_HOLE, 0, "hand"); d.add(POLYMERIZATION, 0, "hand")
++	d.add(FLAME_MANIPULATOR, 0, "hand"); d.add(MASAKI, 0, "hand")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Act(INSTANT_FUSION), PickDMZ(FLAME_SWORDSMAN)])
++	expect(lp(d) == 8000, f"Spell Economics did not remove Instant Fusion's cost: LP {lp(d)}")
++	play(d, [Act(DARK_HOLE), Answer(True, desc=DESC_RETURN)])
++	expect(in_dmz(d, FLAME_SWORDSMAN), "DM not returned")
++	n1 = len(d.messages)
++	play(d, [Act(POLYMERIZATION), PickDMZ(FLAME_SWORDSMAN), Pick(FLAME_MANIPULATOR, MASAKI)])
++	expect(FLAME_SWORDSMAN in d.codes(0, "mzone"), "DM not Fusion Summoned")
++	expect(lp_costs(d, n1) == [(0, 500)] and lp(d) == 7500, f"DMZ cost with Spell Economics: {lp_costs(d, n1)}, LP {lp(d)}")
++	return d
++
++
++@test
++def chain_energy_does_not_apply():
++	d = domain_duel()
++	add_dm(d, GENE_WARPED)
++	setup_lua(d, f"Debug.AddCard({CHAIN_ENERGY},0,0,LOCATION_SZONE,2,POS_FACEUP_ATTACK)\n")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Summon(GENE_WARPED, "summon")])
++	expect(lp(d) == 8000, f"Chain Energy charged the DMZ summon: LP {lp(d)}")
++	return d
++
++
++@test
++def chain_energy_pendulum_scale():
++	d = domain_duel()
++	add_dm(d, ODD_EYES)
++	setup_lua(d, f"Debug.AddCard({CHAIN_ENERGY},0,0,LOCATION_SZONE,2,POS_FACEUP_ATTACK)\n")
++	filler(d, 0); filler(d, 1)
++	begin(d)
++	play(d, [Act(ODD_EYES)])
++	expect(lp(d) == 8000, f"Chain Energy charged the Pendulum Scale activation from the DMZ: LP {lp(d)}")
++	return d
++
++
++@test
++def not_enough_lp_for_cost():
++	d, n0 = summon_and_destroy(True)
++	# 500 LP needed; set LP to 400
++	d.lua("Duel.SetLP(0,400)")
++	play(d, [Phase("ep")], stop="idle", player=1)
++	play(d, [Phase("ep", player=1)], stop="idle", player=0)
++	expect(not dmz_entry(d, "summon", GENE_WARPED), "DM summonable with less LP than its cost")
++	return d
++
++
++if __name__ == "__main__":
++	res = run_tests(sys.argv[1:] or None)
++	w = max(len(n) for n, _, _ in res)
++	for name, st, msg in res:
++		print(f"{st:5} {name:<{w}} {msg[:900]}")
++	print(f"{sum(1 for _, s, _ in res if s == 'PASS')}/{len(res)} passed")
++	sys.exit(0 if all(s == "PASS" for _, s, _ in res) else 1)
+diff --git a/tests/domain/random_duels.py b/tests/domain/random_duels.py
+new file mode 100644
+index 00000000..f6d6073c
+--- /dev/null
++++ b/tests/domain/random_duels.py
+@@ -0,0 +1,173 @@
++#!/usr/bin/env python3
++"""Seeded random duels for the Domain engine work.
++
++  random_duels.py digest SEEDS [--domain]   # print one digest line per seed (messages + responses)
++  random_duels.py compare BASE_LIB NEW_LIB SEEDS
++        non-Domain duels must be identical on both libraries (the Deck Master code is inert)
++  random_duels.py explore SEEDS
++        Domain duels with random Deck Masters on the current library: crashes, engine errors,
++        prompts that cannot be answered and Deck Master Zone invariants are reported
++
++SEEDS is a range like 1-50. Uses the CardScripts tools (EDOPRO_TOOLS) and the databases in
++EDOPRO_CDB; the library is $OCGCORE or $EDOPRO_CACHE/libocgcore.so.
++"""
++import hashlib
++import os
++import random
++import sqlite3
++import subprocess
++import sys
++from pathlib import Path
++
++TOOLS = Path(os.environ.get("EDOPRO_TOOLS",
++                            "/home/user/zedja123/cardscripts/.claude/skills/edopro-card-scripting/tools"))
++SCRIPTS = TOOLS.parents[3]
++DUEL_DOMAIN = 0x2000000000
++LOCATION_DECK_MASTER = 0x40000000
++
++
++def card_pool():
++	cdb = None
++	for item in os.environ.get("EDOPRO_CDB", "").split(os.pathsep):
++		p = Path(item)
++		if p.is_dir() and (p / "cards.cdb").exists():
++			cdb = p / "cards.cdb"
++		elif p.name == "cards.cdb":
++			cdb = p
++	if not cdb:
++		sys.exit("cards.cdb not found in EDOPRO_CDB")
++	con = sqlite3.connect(f"file:{cdb}?mode=ro", uri=True)
++	main, extra, monsters = [], [], []
++	for cid, typ, alias in con.execute("select id,type,alias from datas where ot & 3 and alias = 0 order by id"):
++		if typ & 0x4000 or typ & 0x8000000 or not (SCRIPTS / "official" / f"c{cid}.lua").exists():
++			continue
++		(extra if typ & 0x1 and typ & (0x40 | 0x2000 | 0x800000 | 0x4000000) else main).append(cid)
++		if typ & 0x1:
++			monsters.append(cid)
++	return main, extra, monsters
++
++
++def deck(rng, main, extra):
++	return rng.sample(main, 40), rng.sample(extra, 10)
++
++
++def run(seed, domain, max_prompts=400):
++	sys.path.insert(0, str(TOOLS))
++	from duelsim import DUEL_MODE_MR5, DUEL_PSEUDO_SHUFFLE, Duel, RandomPolicy
++	main, extra, monsters = card_pool()
++	rng = random.Random(seed)
++	flags = DUEL_MODE_MR5 | DUEL_PSEUDO_SHUFFLE | (DUEL_DOMAIN if domain else 0)
++	d = Duel(seed=seed, flags=flags)
++	d.lua("Debug.SetPlayerInfo(0,8000,5,1) Debug.SetPlayerInfo(1,8000,5,1)", "hands.lua")
++	dms = []
++	for p in (0, 1):
++		m, e = deck(rng, main, extra)
++		for c in m:
++			d.add(c, p, "deck")
++		for c in e:
++			d.add(c, p, "extra")
++		if domain:
++			dm = rng.choice(monsters)
++			dms.append(dm)
++			d.add(dm, p, LOCATION_DECK_MASTER, pos=0x0A)
++	d.start()
++	pol = RandomPolicy(seed)
++	err = None
++	try:
++		n = d.run(pol, max_prompts=max_prompts)
++	except Exception as ex:  # DuelError: loops, unanswerable prompts
++		err = f"{type(ex).__name__}: {ex}"
++		n = -1
++	h = hashlib.sha256()
++	for m in d.messages:
++		h.update(bytes([m.type]) + m.raw)
++	for t in d.trace:
++		h.update(repr(t).encode())
++	problems = []
++	if err and d.retry_log and all(x[0] == "ANNOUNCE_CARD" for x in d.retry_log):
++		err = None  # the tools' policy cannot answer filtered card announcements
++	if err:
++		problems.append(err)
++	problems += [f"engine: {e[:200]}" for e in d.errors]
++	if domain:
++		problems += dmz_invariants(d, dms)
++	leaves = sum(1 for m in d.messages if m.name == "HINT" and m.data.get("htype") == 205)
++	returns = sum(1 for m in d.messages if m.name == "HINT" and m.data.get("htype") == 204 and m.data["hdata"] >> 32)
++	return h.hexdigest()[:16], n, problems, (dms, leaves, returns) if domain else dms
++
++
++def dmz_invariants(d, dms):
++	"""Every DM entry in a prompt or message must read (owner, 0, 0xFF) while it is in the zone."""
++	out = []
++	for m in d.messages:
++		if m.name == "HINT" and m.data.get("htype") in (204, 205):
++			p = m.data["player"]
++			if (m.data["hdata"] & 0xFFFFFFFF) != dms[p]:
++				out.append(f"hint {m.data['htype']} for player {p} names {m.data['hdata'] & 0xFFFFFFFF}, DM is {dms[p]}")
++		if m.name == "MOVE":
++			for k in ("prev", "cur"):
++				x = m.data[k]
++				if x["loc"] == 0 and x["seq"] == 0xFF and m.data["code"] not in dms:
++					out.append(f"non-DM card {m.data['code']} moved through the DMZ marker")
++	return out
++
++
++def child(args):
++	mode, seed = args[0], int(args[1])
++	digest, n, problems, dms = run(seed, mode == "domain")
++	print(f"{seed} {digest} prompts={n} dms={dms} problems={len(problems)}")
++	for p in problems[:5]:
++		print("   ", p)
++
++
++def seeds(spec):
++	a, _, b = spec.partition("-")
++	return range(int(a), int(b or a) + 1)
++
++
++def spawn(seed, domain, lib=None):
++	env = dict(os.environ)
++	if lib:
++		env["OCGCORE"] = lib
++	r = subprocess.run([sys.executable, __file__, "_child", "domain" if domain else "plain", str(seed)],
++	                   capture_output=True, text=True, env=env, timeout=600)
++	if r.returncode != 0:
++		return f"{seed} CRASH rc={r.returncode} {r.stderr[-300:]}"
++	return r.stdout.strip()
++
++
++def main():
++	if len(sys.argv) >= 2 and sys.argv[1] == "_child":
++		return child(sys.argv[2:])
++	cmd = sys.argv[1] if len(sys.argv) > 1 else ""
++	if cmd == "digest":
++		for s in seeds(sys.argv[2]):
++			print(spawn(s, "--domain" in sys.argv))
++	elif cmd == "compare":
++		base, new, rng_ = sys.argv[2], sys.argv[3], sys.argv[4]
++		diff = 0
++		for s in seeds(rng_):
++			a, b = spawn(s, False, base), spawn(s, False, new)
++			same = a.split()[:3] == b.split()[:3]
++			diff += not same
++			print(("same " if same else "DIFF ") + b.splitlines()[0])
++			if not same:
++				print("   base:", a.splitlines()[0])
++		print(f"{diff} differing duels")
++		sys.exit(1 if diff else 0)
++	elif cmd == "explore":
++		bad = 0
++		for s in seeds(sys.argv[2]):
++			out = spawn(s, True)
++			first = out.splitlines()[0] if out else f"{s} no output"
++			if "CRASH" in out or "problems=0" not in first:
++				bad += 1
++			print(out)
++		print(f"{bad} duels with problems")
++		sys.exit(1 if bad else 0)
++	else:
++		print(__doc__)
++
++
++if __name__ == "__main__":
++	main()

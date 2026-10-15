@@ -1,0 +1,96 @@
+From 7fbe95272ed43590c2f46838c46cd9ae7e8fedfe Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 14 Oct 2026 18:55:37 +0000
+Subject: [PATCH] Domain: shared constants
+
+Duel flag, Deck Master load location, Deck Master Zone sequence marker and
+the two hints used by the Domain format. Kept identical in ocgcore and gframe.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FfwWDf4waoexMsfaCZApft
+---
+ gframe/ocgapi_constants.h  | 14 ++++++++++++++
+ ocgcore/ocgapi_constants.h | 14 ++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/gframe/ocgapi_constants.h b/gframe/ocgapi_constants.h
+index 1eda797d..eb824bee 100644
+--- a/gframe/ocgapi_constants.h
++++ b/gframe/ocgapi_constants.h
+@@ -17,6 +17,12 @@
+ #define LOCATION_REMOVED 0x20
+ #define LOCATION_EXTRA   0x40
+ #define LOCATION_OVERLAY 0x80
++/* MASQPro Domain: only valid as OCG_NewCardInfo.loc, to load a player's Deck
++   Master into the Deck Master Zone. Never appears in messages. */
++#define LOCATION_DECK_MASTER 0x40000000
++/* MASQPro Domain: a Deck Master in the Deck Master Zone is reported in
++   messages as location 0 with this sequence. */
++#define DMZ_SEQUENCE 0xFF
+ #define LOCATION_ONFIELD (LOCATION_MZONE | LOCATION_SZONE)
+ 
+ /* Positions */
+@@ -325,6 +331,10 @@
+ #define HINT_NUMBER     9
+ #define HINT_CARD       10
+ #define HINT_ZONE       11
++/* MASQPro Domain: data = code | (return count << 32) */
++#define HINT_DMZ        204
++/* MASQPro Domain: data = code */
++#define HINT_DMZ_REMOVE 205
+ 
+ /* Card Hints */
+ #define CHINT_TURN        1
+@@ -443,6 +453,10 @@
+    Pendulum Zones or Extra Monster Zones. */
+ #define DUEL_MODE_GENESYS      (DUEL_FSX_MMZONE | DUEL_TRAP_MONSTERS_NOT_USE_ZONE | DUEL_TRIGGER_ONLY_IN_LOCATION)
+ #define DUEL_MODE_GENESYS_FORB (TYPE_PENDULUM | TYPE_LINK)
++/* MASQPro Domain: each player has a Deck Master in the Deck Master Zone. */
++#define DUEL_DOMAIN            0x2000000000ULL
++#define DUEL_MODE_DOMAIN       (DUEL_MODE_MR5 | DUEL_DOMAIN)
++#define DUEL_MODE_DOMAIN_FORB  0
+ 
+ 
+ #endif /* OCGAPI_CONSTANTS_H */
+diff --git a/ocgcore/ocgapi_constants.h b/ocgcore/ocgapi_constants.h
+index 1eda797d..eb824bee 100644
+--- a/ocgcore/ocgapi_constants.h
++++ b/ocgcore/ocgapi_constants.h
+@@ -17,6 +17,12 @@
+ #define LOCATION_REMOVED 0x20
+ #define LOCATION_EXTRA   0x40
+ #define LOCATION_OVERLAY 0x80
++/* MASQPro Domain: only valid as OCG_NewCardInfo.loc, to load a player's Deck
++   Master into the Deck Master Zone. Never appears in messages. */
++#define LOCATION_DECK_MASTER 0x40000000
++/* MASQPro Domain: a Deck Master in the Deck Master Zone is reported in
++   messages as location 0 with this sequence. */
++#define DMZ_SEQUENCE 0xFF
+ #define LOCATION_ONFIELD (LOCATION_MZONE | LOCATION_SZONE)
+ 
+ /* Positions */
+@@ -325,6 +331,10 @@
+ #define HINT_NUMBER     9
+ #define HINT_CARD       10
+ #define HINT_ZONE       11
++/* MASQPro Domain: data = code | (return count << 32) */
++#define HINT_DMZ        204
++/* MASQPro Domain: data = code */
++#define HINT_DMZ_REMOVE 205
+ 
+ /* Card Hints */
+ #define CHINT_TURN        1
+@@ -443,6 +453,10 @@
+    Pendulum Zones or Extra Monster Zones. */
+ #define DUEL_MODE_GENESYS      (DUEL_FSX_MMZONE | DUEL_TRAP_MONSTERS_NOT_USE_ZONE | DUEL_TRIGGER_ONLY_IN_LOCATION)
+ #define DUEL_MODE_GENESYS_FORB (TYPE_PENDULUM | TYPE_LINK)
++/* MASQPro Domain: each player has a Deck Master in the Deck Master Zone. */
++#define DUEL_DOMAIN            0x2000000000ULL
++#define DUEL_MODE_DOMAIN       (DUEL_MODE_MR5 | DUEL_DOMAIN)
++#define DUEL_MODE_DOMAIN_FORB  0
+ 
+ 
+ #endif /* OCGAPI_CONSTANTS_H */
+-- 
+2.43.0
+

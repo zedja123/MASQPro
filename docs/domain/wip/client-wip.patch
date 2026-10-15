@@ -1,0 +1,1574 @@
+diff --git a/gframe/deck.h b/gframe/deck.h
+index ef50cf49..a161dc54 100644
+--- a/gframe/deck.h
++++ b/gframe/deck.h
+@@ -10,10 +10,13 @@ struct Deck {
+ 	Vector main;
+ 	Vector extra;
+ 	Vector side;
++	// Domain format: the Deck Master, kept apart from the other piles.
++	const CardDataC* master{ nullptr };
+ 	void clear() {
+ 		main.clear();
+ 		extra.clear();
+ 		side.clear();
++		master = nullptr;
+ 	}
+ };
+ enum class RITUAL_LOCATION : uint8_t {
+diff --git a/gframe/deck_con.cpp b/gframe/deck_con.cpp
+index 2146269c..d6ed9e5d 100644
+--- a/gframe/deck_con.cpp
++++ b/gframe/deck_con.cpp
+@@ -204,6 +204,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+ 					options.duelFlags = DUEL_MODE_GENESYS;
+ 					break;
+ 				}
++				case 9: {
++					options.duelFlags = DUEL_MODE_DOMAIN;
++					break;
++				}
+ 				}
+ #undef CHECK
+ 				options.duelFlags |= mainGame->chkHandTestNoShuffle->isChecked() ? DUEL_PSEUDO_SHUFFLE : 0;
+@@ -359,7 +363,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+ 				auto old_skills = DeckManager::TypeCount(gdeckManager->pre_deck.main, TYPE_SKILL);
+ 				auto new_skills = DeckManager::TypeCount(current_deck.main, TYPE_SKILL);
+ 				if((current_deck.main.size() - new_skills) != (gdeckManager->pre_deck.main.size() - old_skills)
+-				   || current_deck.extra.size() != gdeckManager->pre_deck.extra.size()) {
++				   || current_deck.extra.size() != gdeckManager->pre_deck.extra.size()
++				   || current_deck.master != gdeckManager->pre_deck.master) {
+ 					mainGame->PopupMessage(gDataManager->GetSysString(1408));
+ 					break;
+ 				}
+@@ -367,7 +372,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+ 				const auto& deck = current_deck;
+ 				uint8_t deckbuf[0xf000];
+ 				auto* pdeck = deckbuf;
+-				static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
++				// counts, cards and the Deck Master trailer
++				static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 4;
+ 				const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
+ 				if(totsize > max_deck_size) {
+ 					mainGame->PopupMessage(gDataManager->GetSysString(1410));
+@@ -381,6 +387,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
+ 					BufferIO::Write<uint32_t>(pdeck, pcard->code);
+ 				for(const auto& pcard : deck.side)
+ 					BufferIO::Write<uint32_t>(pdeck, pcard->code);
++				if(deck.master) {
++					BufferIO::Write<uint32_t>(pdeck, DECK_MASTER_TRAILER);
++					BufferIO::Write<uint32_t>(pdeck, deck.master->code);
++				}
+ 				DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
+ 				gdeckManager->sent_deck = current_deck;
+ 				break;
+diff --git a/gframe/deck_manager.cpp b/gframe/deck_manager.cpp
+index 741a9f83..40c2d5a6 100644
+--- a/gframe/deck_manager.cpp
++++ b/gframe/deck_manager.cpp
+@@ -43,10 +43,12 @@ static constexpr uint32_t GenesysPointsSalt(uint32_t code, uint32_t points) {
+ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 	static constexpr auto key = "$whitelist"sv;
+ 	static constexpr auto genesys_key = "$genesys"sv;
++	static constexpr auto domain_key = "$domain"sv;
+ 	FileStream infile{ path, FileStream::in };
+ 	if(infile.fail())
+ 		return false;
+ 	bool loaded = false;
++	bool in_list = false;
+ 	LFList lflist;
+ 	lflist.hash = 0;
+ 	std::string str;
+@@ -56,10 +58,20 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 			if(pos != std::string::npos)
+ 				str.erase(pos);
+ 		}
+-		if(str.empty() || str[0] == '#')
++		if(str.empty())
++			continue;
++		if(str[0] == '#') {
++			// Domain data lines are only read inside a Domain list, anywhere
++			// else they stay comments.
++			if(in_list && lflist.domain && str.size() >= 2 && str[1] == '@') {
++				const auto text = DomainList::TrimLine(epro::stringview{ str }.substr(2));
++				lflist.hash ^= DomainList::LineSalt(text);
++				lflist.domain_data.ParseLine(text);
++			}
+ 			continue;
++		}
+ 		if(str[0] == '!') {
+-			if(lflist.hash)
++			if(in_list)
+ 				_lfList.push_back(std::move(lflist));
+ 			lflist.listName = BufferIO::DecodeUTF8({ str.data() + 1, str.size() - 1 });
+ 			lflist.content.clear();
+@@ -68,6 +80,9 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 			lflist.genesys = false;
+ 			lflist.genesys_cap = 0;
+ 			lflist.points.clear();
++			lflist.domain = false;
++			lflist.domain_data.clear();
++			in_list = true;
+ 			loaded = true;
+ 			continue;
+ 		}
+@@ -76,7 +91,7 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 			continue;
+ 		}
+ 		if(str.rfind(genesys_key.data(), 0, genesys_key.size()) == 0) {
+-			if(!lflist.hash || lflist.genesys)
++			if(!in_list || lflist.genesys || lflist.domain)
+ 				continue;
+ 			uint32_t cap = 100;
+ 			auto b = str.find_first_of("0123456789", genesys_key.size());
+@@ -91,7 +106,14 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 			lflist.hash ^= GenesysCapSalt(cap);
+ 			continue;
+ 		}
+-		if(!lflist.hash)
++		if(str.rfind(domain_key.data(), 0, domain_key.size()) == 0) {
++			if(!in_list || lflist.domain || lflist.genesys)
++				continue;
++			lflist.domain = true;
++			lflist.hash ^= DomainList::Salt;
++			continue;
++		}
++		if(!in_list)
+ 			continue;
+ 		auto p = str.find(' ');
+ 		if(p == std::string::npos)
+@@ -120,8 +142,8 @@ bool DeckManager::LoadLFListSingle(const epro::path_string& path) {
+ 		}
+ 		catch(...){}
+ 	}
+-	if(lflist.hash)
+-		_lfList.push_back(lflist);
++	if(in_list)
++		_lfList.push_back(std::move(lflist));
+ 	return loaded;
+ }
+ bool DeckManager::LoadLFListFolder(epro::path_stringview _path) {
+@@ -154,20 +176,24 @@ void DeckManager::RefreshLFList() {
+ 	}
+ }
+ void DeckManager::RefreshDeck(Deck& deck) {
+-	for(auto& list : { &deck.main, &deck.extra, &deck.side }) {
+-		for(auto& card : *list) {
+-			if(card->code == 0 && card->alias) {
+-				const CardDataC* cd;
+-				if((cd = gDataManager->GetCardData(card->alias)) == nullptr)
+-					cd = gDataManager->GetMappedCardData(card->alias);
+-				if(cd != nullptr)
+-					card = cd;
+-			}
++	auto refresh = [](const CardDataC*& card) {
++		if(card->code == 0 && card->alias) {
++			const CardDataC* cd;
++			if((cd = gDataManager->GetCardData(card->alias)) == nullptr)
++				cd = gDataManager->GetMappedCardData(card->alias);
++			if(cd != nullptr)
++				card = cd;
+ 		}
++	};
++	for(auto& list : { &deck.main, &deck.extra, &deck.side }) {
++		for(auto& card : *list)
++			refresh(card);
+ 	}
++	if(deck.master)
++		refresh(deck.master);
+ }
+ LFList const* DeckManager::GetLFList(uint32_t lfhash) const {
+-	auto it = std::find_if(_lfList.begin(), _lfList.end(), [lfhash](LFList list) {return list.hash == lfhash; });
++	auto it = std::find_if(_lfList.begin(), _lfList.end(), [lfhash](const LFList& list) {return list.hash == lfhash; });
+ 	return it != _lfList.end() ? &*it : nullptr;
+ }
+ epro::wstringview DeckManager::GetLFListName(uint32_t lfhash) const {
+@@ -193,6 +219,49 @@ int DeckManager::CountLegends(const Deck::Vector& cards, uint32_t type) {
+ 	return count;
+ 
+ }
++static DeckError::DERR_TYPE CheckAllowedCards(const CardDataC* cit, DuelAllowedCards allowedCards) {
++	switch (allowedCards) {
++#define CHECK_UNOFFICIAL(cit) if (cit->ot > 0x3) return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_OCG_ONLY:
++		CHECK_UNOFFICIAL(cit);
++		if (!(cit->ot & 0x1))
++			return DeckError::TCGONLY;
++		break;
++	case DuelAllowedCards::ALLOWED_CARDS_TCG_ONLY:
++		CHECK_UNOFFICIAL(cit);
++		if (!(cit->ot & 0x2))
++			return DeckError::OCGONLY;
++		break;
++	case DuelAllowedCards::ALLOWED_CARDS_OCG_TCG:
++		CHECK_UNOFFICIAL(cit);
++		break;
++#undef CHECK_UNOFFICIAL
++	case DuelAllowedCards::ALLOWED_CARDS_WITH_PRERELEASE:
++		if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x100)
++			break;
++		return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_OCG_CUSTOM:
++		if (cit->ot & 0x1 || cit->ot & 0x20)
++			break;
++		return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_TCG_CUSTOM:
++		if (cit->ot & 0x2 || cit->ot & 0x20)
++			break;
++		return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_OCG_TCG_CUSTOM:
++		if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x20)
++			break;
++		return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_PRERELEASE_CUSTOM:
++		if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x100 || cit->ot & 0x20)
++			break;
++		return DeckError::UNOFFICIALCARD;
++	case DuelAllowedCards::ALLOWED_CARDS_ANY:
++	default:
++		break;
++	}
++	return DeckError::NONE;
++}
+ static DeckError CheckCards(const Deck::Vector& cards, LFList const* curlist,
+ 					  DuelAllowedCards allowedCards,
+ 					  banlist_content_t& ccount,
+@@ -200,46 +269,8 @@ static DeckError CheckCards(const Deck::Vector& cards, LFList const* curlist,
+ 	DeckError ret{ DeckError::NONE };
+ 	for (const auto cit : cards) {
+ 		ret.code = cit->code;
+-		switch (allowedCards) {
+-#define CHECK_UNOFFICIAL(cit) if (cit->ot > 0x3) return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_OCG_ONLY:
+-			CHECK_UNOFFICIAL(cit);
+-			if (!(cit->ot & 0x1))
+-				return ret.type = DeckError::TCGONLY, ret;
+-			break;
+-		case DuelAllowedCards::ALLOWED_CARDS_TCG_ONLY:
+-			CHECK_UNOFFICIAL(cit);
+-			if (!(cit->ot & 0x2))
+-				return ret.type = DeckError::OCGONLY, ret;
+-			break;
+-		case DuelAllowedCards::ALLOWED_CARDS_OCG_TCG:
+-			CHECK_UNOFFICIAL(cit);
+-			break;
+-#undef CHECK_UNOFFICIAL
+-		case DuelAllowedCards::ALLOWED_CARDS_WITH_PRERELEASE:
+-			if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x100)
+-				break;
+-			return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_OCG_CUSTOM:
+-			if (cit->ot & 0x1 || cit->ot & 0x20)
+-				break;
+-			return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_TCG_CUSTOM:
+-			if (cit->ot & 0x2 || cit->ot & 0x20)
+-				break;
+-			return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_OCG_TCG_CUSTOM:
+-			if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x20)
+-				break;
+-			return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_PRERELEASE_CUSTOM:
+-			if (cit->ot & 0x1 || cit->ot & 0x2 || cit->ot & 0x100 || cit->ot & 0x20)
+-				break;
+-			return ret.type = DeckError::UNOFFICIALCARD, ret;
+-		case DuelAllowedCards::ALLOWED_CARDS_ANY:
+-		default:
+-			break;
+-		}
++		if(auto allowed = CheckAllowedCards(cit, allowedCards); allowed != DeckError::NONE)
++			return ret.type = allowed, ret;
+ 		DeckError additional = additionalCheck ? additionalCheck(cit) : DeckError{ DeckError::NONE };
+ 		if (additional.type) {
+ 			return additional;
+@@ -256,7 +287,88 @@ static DeckError CheckCards(const Deck::Vector& cards, LFList const* curlist,
+ 	}
+ 	return { DeckError::NONE };
+ }
++static DeckError MakeDeckError(DeckError::DERR_TYPE type, uint32_t code) {
++	DeckError ret{ type };
++	ret.count = {};
++	ret.code = code;
++	return ret;
++}
++static bool IsMainDeckCardMisplaced(const CardDataC* cit, bool rituals_in_extra) {
++	if((cit->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ)) || (cit->type & TYPE_LINK && cit->type & TYPE_MONSTER))
++		return true;
++	return cit->isRitualMonster() && rituals_in_extra;
++}
++static bool IsExtraDeckCardMisplaced(const CardDataC* cit, bool rituals_in_extra) {
++	if(cit->isRitualMonster())
++		return !rituals_in_extra;
++	return !(cit->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ)) && !(cit->type & TYPE_LINK && cit->type & TYPE_MONSTER);
++}
++DeckError DeckManager::CheckDeckMaster(const Deck& deck, const LFList& lflist, bool check_content) {
++	const auto* dm = deck.master;
++	if(!dm || dm->code == 0 || !(dm->type & TYPE_MONSTER) || (dm->type & (TYPE_TOKEN | TYPE_SKILL)))
++		return MakeDeckError(DeckError::DOMAIN_DECK_MASTER, dm ? dm->getRealCode() : 0);
++	if(check_content && lflist.domain_data.IsForbidden(dm))
++		return MakeDeckError(DeckError::DOMAIN_FORBIDDEN_DM, dm->code);
++	return MakeDeckError(DeckError::NONE, 0);
++}
++DomainEntry DeckManager::GetDomain(const LFList& lflist, const CardDataC* dm) {
++	return lflist.domain_data.Get(dm);
++}
++bool DeckManager::IsInDomain(const CardDataC* card, const DomainEntry& domain) {
++	return ygo::IsInDomain(card, domain, [](uint32_t code) { return gDataManager->GetCardData(code); });
++}
++// Domain lists: one Deck Master, one copy of each card (Deck Master included,
++// "always treated as" cards counted by their alias), no Skills, Rush or
++// Legend cards, and every Main and Extra Deck card in the Deck Master's domain.
++static DeckError CheckDomainDeckContent(const Deck& deck, const LFList& lflist, DuelAllowedCards allowedCards, uint32_t forbiddentypes, bool rituals_in_extra) {
++	auto ret = DeckManager::CheckDeckMaster(deck, lflist, true);
++	if(ret.type)
++		return ret;
++	const Deck::Vector master{ deck.master };
++	const auto piles = { &master, &deck.main, &deck.extra, &deck.side };
++	forbiddentypes |= TYPE_SKILL;
++	for(const auto* pile : piles) {
++		for(const auto* card : *pile) {
++			if(card->type & forbiddentypes)
++				return MakeDeckError(DeckError::FORBTYPE, card->code);
++		}
++	}
++	for(const auto* pile : piles) {
++		for(const auto* card : *pile) {
++			if(card->ot & (SCOPE_RUSH | SCOPE_LEGEND))
++				return MakeDeckError(DeckError::DOMAIN_OUT_OF_DOMAIN, card->code);
++		}
++	}
++	std::unordered_map<uint32_t, int> ccount;
++	for(const auto* pile : piles) {
++		for(const auto* card : *pile) {
++			if(auto allowed = CheckAllowedCards(card, allowedCards); allowed != DeckError::NONE)
++				return MakeDeckError(allowed, card->code);
++			if((pile == &deck.main && IsMainDeckCardMisplaced(card, rituals_in_extra))
++			   || (pile == &deck.extra && IsExtraDeckCardMisplaced(card, rituals_in_extra))) {
++				return MakeDeckError(DeckError::EXTRACOUNT, card->code);
++			}
++			const auto count = ++ccount[card->alias ? card->alias : card->code];
++			if(count > 1)
++				return MakeDeckError(DeckError::DOMAIN_SINGLETON, card->code);
++			auto it = lflist.GetLimitationIterator(card);
++			auto is_end = it == lflist.content.end();
++			if((!is_end && count > it->second) || (lflist.whitelist && is_end))
++				return MakeDeckError(DeckError::LFLIST, card->code);
++		}
++	}
++	const auto domain = DeckManager::GetDomain(lflist, deck.master);
++	for(const auto* pile : { &deck.main, &deck.extra }) {
++		for(const auto* card : *pile) {
++			if(!DeckManager::IsInDomain(card, domain))
++				return MakeDeckError(DeckError::DOMAIN_OUT_OF_DOMAIN, card->code);
++		}
++	}
++	return ret;
++}
+ DeckError DeckManager::CheckDeckContent(const Deck& deck, LFList const* lflist, DuelAllowedCards allowedCards, uint32_t forbiddentypes, bool rituals_in_extra) {
++	if(lflist && lflist->domain)
++		return CheckDomainDeckContent(deck, *lflist, allowedCards, forbiddentypes, rituals_in_extra);
+ 	DeckError ret{ DeckError::NONE };
+ 	if(TypeCount(deck.main, forbiddentypes) > 0 || TypeCount(deck.extra, forbiddentypes) > 0 || TypeCount(deck.side, forbiddentypes) > 0)
+ 		return ret.type = DeckError::FORBTYPE, ret;
+@@ -272,18 +384,13 @@ DeckError DeckManager::CheckDeckContent(const Deck& deck, LFList const* lflist,
+ 	if(!lflist)
+ 		return ret;
+ 	ret = CheckCards(deck.main, lflist, allowedCards, ccount, [&](const CardDataC* cit)->DeckError {
+-		if ((cit->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ)) || (cit->type & TYPE_LINK && cit->type & TYPE_MONSTER))
+-			return { DeckError::EXTRACOUNT };
+-		if(cit->isRitualMonster() && rituals_in_extra)
++		if(IsMainDeckCardMisplaced(cit, rituals_in_extra))
+ 			return { DeckError::EXTRACOUNT };
+ 		return { DeckError::NONE };
+ 	});
+ 	if (ret.type) return ret;
+ 	ret = CheckCards(deck.extra, lflist, allowedCards, ccount, [&](const CardDataC* cit)->DeckError {
+-		if(cit->isRitualMonster()) {
+-			if(!rituals_in_extra)
+-				return { DeckError::EXTRACOUNT };
+-		} else if (!(cit->type & (TYPE_FUSION | TYPE_SYNCHRO | TYPE_XYZ)) && !(cit->type & TYPE_LINK && cit->type & TYPE_MONSTER))
++		if(IsExtraDeckCardMisplaced(cit, rituals_in_extra))
+ 			return { DeckError::EXTRACOUNT };
+ 		return { DeckError::NONE };
+ 	});
+@@ -343,7 +450,7 @@ DeckError DeckManager::CheckDeckSize(const Deck& deck, const DeckSizes& sizes) {
+ 	}
+ 	return ret;
+ }
+-uint32_t DeckManager::LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra) {
++uint32_t DeckManager::LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra, uint32_t master) {
+ 	cardlist_type mainvect(mainc);
+ 	cardlist_type sidevect(sidec);
+ 	auto copy = [&dbuf](uint32_t* vec, uint32_t count) {
+@@ -354,9 +461,14 @@ uint32_t DeckManager::LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t ma
+ 	};
+ 	copy(mainvect.data(), mainc);
+ 	copy(sidevect.data(), sidec);
+-	return LoadDeck(deck, mainvect, sidevect, nullptr, rituals_in_extra);
++	return LoadDeck(deck, mainvect, sidevect, nullptr, rituals_in_extra, master);
+ }
+-static bool LoadCardList(const epro::path_string& name, cardlist_type* mainlist = nullptr, cardlist_type* extralist = nullptr, cardlist_type* sidelist = nullptr, uint32_t* retmainc = nullptr, uint32_t* retsidec = nullptr) {
++uint32_t DeckManager::ReadDeckMasterTrailer(const uint8_t* trailer, size_t len) {
++	if(len < sizeof(uint32_t) * 2 || BufferIO::Read<uint32_t>(trailer) != DECK_MASTER_TRAILER)
++		return 0;
++	return BufferIO::Read<uint32_t>(trailer);
++}
++static bool LoadCardList(const epro::path_string& name, cardlist_type* mainlist = nullptr, cardlist_type* extralist = nullptr, cardlist_type* sidelist = nullptr, uint32_t* master = nullptr, uint32_t* retmainc = nullptr, uint32_t* retsidec = nullptr) {
+ 	FileStream deck{ name, FileStream::in };
+ 	if(deck.fail())
+ 		return false;
+@@ -364,7 +476,12 @@ static bool LoadCardList(const epro::path_string& name, cardlist_type* mainlist
+ 	std::string str;
+ 	bool is_side = false;
+ 	bool is_extra = false;
++	// Domain format: "#master" starts the Deck Master section (written after
++	// the side deck), whose first code is the Deck Master.
++	bool is_master = false;
+ 	uint32_t sidec = 0;
++	if(master)
++		*master = 0;
+ 	while(std::getline(deck, str)) {
+ 		auto pos = str.find_first_of("\n\r");
+ 		if(str.size() && pos != std::string::npos)
+@@ -372,18 +489,29 @@ static bool LoadCardList(const epro::path_string& name, cardlist_type* mainlist
+ 		if(str.empty())
+ 			continue;
+ 		if(str[0] == '#') {
++			if(str.substr(0, str.find_last_not_of(" \t") + 1) == "#master") {
++				is_master = true;
++				continue;
++			}
+ 			if(!extralist || str != "#extra")
+ 				continue;
+ 			is_extra = true;
++			is_master = false;
+ 		}
+ 		if(str[0] == '!') {
+ 			is_side = true;
++			is_master = false;
+ 			continue;
+ 		}
+ 		if(str.find_first_of("0123456789") != std::string::npos) {
+ 			uint32_t code = 0;
+ 			try { code = static_cast<uint32_t>(std::stoul(str)); }
+ 			catch (...) { continue; }
++			if(is_master) {
++				if(master && *master == 0)
++					*master = code;
++				continue;
++			}
+ 			res.push_back(code);
+ 			if(is_side) {
+ 				if(sidelist)
+@@ -407,14 +535,15 @@ bool DeckManager::LoadDeckFromFile(epro::path_stringview file, Deck& out, bool s
+ 	cardlist_type mainlist;
+ 	cardlist_type sidelist;
+ 	cardlist_type extralist;
+-	if(!LoadCardList(GetDeckPath(file), &mainlist, separated ? &extralist : nullptr, &sidelist)) {
+-		if(!LoadCardList({ file.data(), file.size() }, &mainlist, separated ? &extralist : nullptr, &sidelist))
++	uint32_t master = 0;
++	if(!LoadCardList(GetDeckPath(file), &mainlist, separated ? &extralist : nullptr, &sidelist, &master)) {
++		if(!LoadCardList({ file.data(), file.size() }, &mainlist, separated ? &extralist : nullptr, &sidelist, &master))
+ 			return false;
+ 	}
+-	LoadDeck(out, mainlist, sidelist, separated ? &extralist : nullptr, rituals_in_extra);
++	LoadDeck(out, mainlist, sidelist, separated ? &extralist : nullptr, rituals_in_extra, master);
+ 	return true;
+ }
+-uint32_t DeckManager::LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist, RITUAL_LOCATION rituals_in_extra) {
++uint32_t DeckManager::LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist, RITUAL_LOCATION rituals_in_extra, uint32_t master) {
+ 	deck.clear();
+ 	uint32_t errorcode = 0;
+ 	const CardDataC* cd = nullptr;
+@@ -475,9 +604,20 @@ uint32_t DeckManager::LoadDeck(Deck& deck, const cardlist_type& mainlist, const
+ 			continue;
+ 		deck.side.push_back(cd);
+ 	}
++	// The Deck Master is kept whatever its type, the deck check rejects an
++	// unknown or invalid one.
++	if(master) {
++		if(!(cd = gDataManager->GetCardData(master)))
++			cd = gdeckManager->GetDummyOrMappedCardData(master);
++		if(cd && (cd->code != 0 || loadalways))
++			deck.master = cd;
++	}
+ 	return errorcode;
+ }
+-bool DeckManager::LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra) {
++bool DeckManager::LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra, uint32_t master, bool domain) {
++	// Domain: the Deck Master cannot be changed between duels.
++	if(domain && (!deck.master || deck.master->code != master))
++		return false;
+ 	std::map<uint32_t, int> pcount;
+ 	std::map<uint32_t, int> ncount;
+ 	for(auto& card: deck.main)
+@@ -517,6 +657,7 @@ bool DeckManager::LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t
+ 		ncount[card->code]++;
+ 	if(!std::equal(pcount.begin(), pcount.end(), ncount.begin()))
+ 		return false;
++	ndeck.master = deck.master;
+ 	deck = ndeck;
+ 	return true;
+ }
+@@ -535,9 +676,11 @@ bool DeckManager::SaveDeck(epro::path_stringview name, const Deck& deck) {
+ 	serializeDeck(deck.extra);
+ 	deckfile << "!side\n";
+ 	serializeDeck(deck.side);
++	if(deck.master)
++		deckfile << "#master\n" << MakeYdkEntryString(deck.master->getRealCode());
+ 	return true;
+ }
+-bool DeckManager::SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist) {
++bool DeckManager::SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist, uint32_t master) {
+ 	const auto fullname = GetDeckPath(name);
+ 	FileStream deckfile{ fullname, FileStream::out };
+ 	if(deckfile.fail())
+@@ -551,6 +694,8 @@ bool DeckManager::SaveDeck(epro::path_stringview name, const cardlist_type& main
+ 	deckfile << "!side\n";
+ 	for(auto card : sidelist)
+ 		deckfile << MakeYdkEntryString(card);
++	if(master)
++		deckfile << "#master\n" << MakeYdkEntryString(master);
+ 	return true;
+ }
+ std::string DeckManager::MakeYdkEntryString(uint32_t code) {
+@@ -567,7 +712,11 @@ std::wstring DeckManager::ExportDeckYdke(const Deck& deck) {
+ 		}
+ 		return base64_encode((uint8_t*)cards.data(), cards.size() * sizeof(cardlist_type::value_type));
+ 	};
+-	return epro::format(L"ydke://{}!{}!{}!", decktobuf(deck.main), decktobuf(deck.extra), decktobuf(deck.side));
++	auto res = epro::format(L"ydke://{}!{}!{}!", decktobuf(deck.main), decktobuf(deck.extra), decktobuf(deck.side));
++	// Domain: the Deck Master as a 4th segment, older importers ignore it.
++	if(deck.master)
++		res.append(epro::format(L"{}!", decktobuf(Deck::Vector{ deck.master })));
++	return res;
+ }
+ std::wstring DeckManager::ExportDeckCardNames(Deck deck) {
+ 	std::wstring res;
+@@ -614,6 +763,12 @@ std::wstring DeckManager::ExportDeckCardNames(Deck deck) {
+ 			res.append(L"\n\n");
+ 		res.append(L"Side Deck:\n");
+ 		serialize(deck.side);
++		prev = true;
++	}
++	if(deck.master) {
++		if(prev)
++			res.append(L"\n\n");
++		res.append(epro::format(L"Deck Master:\n1 {}\n", gDataManager->GetName(deck.master->getRealCode())));
+ 	}
+ 	return res;
+ }
+@@ -624,19 +779,26 @@ static cardlist_type BufferToCardlist(const std::vector<uint8_t>& input) {
+ }
+ void DeckManager::ImportDeckYdke(Deck& deck, epro::wstringview buffer) {
+ 	buffer.remove_prefix(L"ydke://"sv.size());
+-	size_t delimiters[3];
++	size_t delimiters[4];
+ 	int delim = 0;
+-	for(int i = 0; delim < 3 && buffer[i]; i++) {
++	for(size_t i = 0; delim < 4 && i < buffer.size() && buffer[i]; i++) {
+ 		if(buffer[i] == L'!') {
+ 			delimiters[delim++] = i;
+ 		}
+ 	}
+-	if(delim != 3)
++	if(delim < 3)
+ 		return;
+ 	const auto mainlist = BufferToCardlist(base64_decode(buffer.substr(0, delimiters[0])));
+ 	const auto extralist = BufferToCardlist(base64_decode(buffer.substr(delimiters[0] + 1, delimiters[1] - delimiters[0])));
+ 	const auto sidelist = BufferToCardlist(base64_decode(buffer.substr(delimiters[1] + 1, delimiters[2] - delimiters[1])));
+-	LoadDeck(deck, mainlist, sidelist, &extralist);
++	// Domain: optional 4th segment with the Deck Master.
++	uint32_t master = 0;
++	if(delim == 4) {
++		const auto masterlist = BufferToCardlist(base64_decode(buffer.substr(delimiters[2] + 1, delimiters[3] - delimiters[2])));
++		if(!masterlist.empty())
++			master = masterlist.front();
++	}
++	LoadDeck(deck, mainlist, sidelist, &extralist, RITUAL_LOCATION::DEFAULT, master);
+ }
+ template<size_t N>
+ uint32_t gzinflate(const std::vector<uint8_t>& in, uint8_t(&buffer)[N]) {
+diff --git a/gframe/deck_manager.h b/gframe/deck_manager.h
+index d4e604b3..08ff9ed0 100644
+--- a/gframe/deck_manager.h
++++ b/gframe/deck_manager.h
+@@ -9,6 +9,7 @@
+ #include "fmt.h"
+ #include "data_manager.h"
+ #include "deck.h"
++#include "domain_list.h"
+ 
+ namespace ygo {
+ 
+@@ -25,6 +26,10 @@ struct LFList {
+ 	bool genesys{ false };
+ 	uint32_t genesys_cap{ 0 };
+ 	std::unordered_map<uint32_t, uint32_t> points;
++	// Domain format: a "$domain" line, followed by "#@" data lines with the
++	// domain of each Deck Master and the forbidden Deck Masters.
++	bool domain{ false };
++	DomainList domain_data;
+ 	auto GetLimitationIterator(const CardDataC* pcard) const {
+ 		auto flit = content.find(pcard->code);
+ 		if(flit == content.end() && pcard->alias) {
+@@ -90,15 +95,22 @@ public:
+ 	static void RefreshDeck(Deck& deck);
+ 	static DeckError CheckDeckContent(const Deck& deck, LFList const* lflist, DuelAllowedCards allowedCards, uint32_t forbiddentypes, bool rituals_in_extra);
+ 	static DeckError CheckDeckSize(const Deck& deck, const DeckSizes& sizes);
++	// Domain: Deck Master present and valid (DOMAIN_DECK_MASTER, checked even
++	// without content checks) and not forbidden (DOMAIN_FORBIDDEN_DM).
++	static DeckError CheckDeckMaster(const Deck& deck, const LFList& lflist, bool check_content);
++	static DomainEntry GetDomain(const LFList& lflist, const CardDataC* dm);
++	static bool IsInDomain(const CardDataC* card, const DomainEntry& domain);
++	// Deck Master code from the CTOS_UPDATE_DECK trailer, 0 if there is none.
++	static uint32_t ReadDeckMasterTrailer(const uint8_t* trailer, size_t len);
+ 	static uint32_t GetGenesysPoints(const Deck& deck, const LFList& lflist);
+ 	static int TypeCount(const Deck::Vector& cards, uint32_t type);
+ 	static int CountLegends(const Deck::Vector& cards, uint32_t type);
+-	static uint32_t LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
+-	static uint32_t LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist = nullptr, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
+-	static bool LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra);
++	static uint32_t LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT, uint32_t master = 0);
++	static uint32_t LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist = nullptr, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT, uint32_t master = 0);
++	static bool LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra, uint32_t master = 0, bool domain = false);
+ 	static bool LoadDeckFromFile(epro::path_stringview file, Deck& out, bool separated = false, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
+ 	static bool SaveDeck(epro::path_stringview name, const Deck& deck);
+-	static bool SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist);
++	static bool SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist, uint32_t master = 0);
+ 	static std::string MakeYdkEntryString(uint32_t code);
+ 	static std::wstring ExportDeckYdke(const Deck& deck);
+ 	static std::wstring ExportDeckCardNames(Deck deck);
+diff --git a/gframe/domain_list.h b/gframe/domain_list.h
+new file mode 100644
+index 00000000..43d8c1ac
+--- /dev/null
++++ b/gframe/domain_list.h
+@@ -0,0 +1,211 @@
++#ifndef DOMAIN_LIST_H
++#define DOMAIN_LIST_H
++
++#include <algorithm>
++#include <cstdint>
++#include <string_view>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
++#include "ocgapi_constants.h"
++
++namespace ygo {
++
++// Domain format. A "$domain" line turns a banlist into a Domain list; inside
++// such a list, lines starting with "#@" carry the Domain data (older parsers
++// read them as comments):
++//   #@forbid-dm <code>
++//   #@dm <code> [a=<hex>] [r=<hex>] [s=<hex>,...] [n=<code>,...]
++// "a" and "r" are the attribute and race masks of the Deck Master's domain,
++// "s" its archetypes and "n" the monsters named in its text. The parsing and
++// the hash contributions must stay identical to Multirole's BanlistParser and
++// to the reference implementation (LFListsZedja tools/domain_ref.py).
++struct DomainEntry {
++	uint32_t attribute{ 0 };
++	uint64_t race{ 0 };
++	std::vector<uint16_t> setcodes; // sorted, unique, never 0
++	std::vector<uint32_t> names; // sorted
++};
++
++struct DomainList {
++	static constexpr uint32_t Salt = 0x444F4D41U;
++	std::unordered_map<uint32_t, DomainEntry> masters;
++	std::unordered_set<uint32_t> forbidden_masters;
++
++	void clear() {
++		masters.clear();
++		forbidden_masters.clear();
++	}
++	// Hash contribution of one "#@" line: rotl(fnv1a32(text), 1), where text
++	// is the line after "#@" without trailing spaces and tabs.
++	static uint32_t LineSalt(std::string_view text) {
++		uint32_t hash = 0x811C9DC5U;
++		for(const auto c : text) {
++			hash ^= static_cast<uint8_t>(c);
++			hash *= 0x01000193U;
++		}
++		return (hash << 1) | (hash >> 31);
++	}
++	static std::string_view TrimLine(std::string_view text) {
++		const auto end = text.find_last_not_of(" \t");
++		return end == std::string_view::npos ? std::string_view{} : text.substr(0, end + 1);
++	}
++	// Parses the text of a "#@" line. A malformed line or an unknown directive
++	// is skipped (returns false); for a code with several "#@dm" lines the
++	// first one wins.
++	bool ParseLine(std::string_view text) {
++		const auto tokens = Split(text, " \t\v\f\r\n");
++		if(tokens.empty())
++			return false;
++		uint64_t code = 0;
++		if(tokens[0] == "forbid-dm") {
++			if(tokens.size() != 2 || !ParseUint(tokens[1], 10, UINT32_MAX, code) || code == 0)
++				return false;
++			forbidden_masters.insert(static_cast<uint32_t>(code));
++			return true;
++		}
++		if(tokens[0] != "dm" || tokens.size() < 2 || !ParseUint(tokens[1], 10, UINT32_MAX, code) || code == 0)
++			return false;
++		DomainEntry entry;
++		for(size_t i = 2; i < tokens.size(); ++i) {
++			const auto eq = tokens[i].find('=');
++			if(eq == std::string_view::npos)
++				return false;
++			const auto key = tokens[i].substr(0, eq);
++			const auto items = Split(tokens[i].substr(eq + 1), ",");
++			uint64_t value = 0;
++			if(key == "a" || key == "r") {
++				if(items.size() > 1 || (!items.empty() && !ParseUint(items[0], 16, key == "a" ? UINT32_MAX : UINT64_MAX, value)))
++					return false;
++				if(key == "a")
++					entry.attribute = static_cast<uint32_t>(value);
++				else
++					entry.race = value;
++			} else if(key == "s") {
++				entry.setcodes.clear();
++				for(const auto& item : items) {
++					if(!ParseUint(item, 16, 0xffff, value))
++						return false;
++					if(value)
++						entry.setcodes.push_back(static_cast<uint16_t>(value));
++				}
++			} else if(key == "n") {
++				entry.names.clear();
++				for(const auto& item : items) {
++					if(!ParseUint(item, 10, UINT32_MAX, value))
++						return false;
++					entry.names.push_back(static_cast<uint32_t>(value));
++				}
++			}
++		}
++		std::sort(entry.setcodes.begin(), entry.setcodes.end());
++		entry.setcodes.erase(std::unique(entry.setcodes.begin(), entry.setcodes.end()), entry.setcodes.end());
++		std::sort(entry.names.begin(), entry.names.end());
++		masters.emplace(static_cast<uint32_t>(code), std::move(entry));
++		return true;
++	}
++	// Lookups use the card's own code, then its alias (any alias, not only
++	// alternate artworks).
++	template<typename T>
++	const DomainEntry* Find(const T* dm) const {
++		auto it = masters.find(dm->code);
++		if(it == masters.end() && dm->alias)
++			it = masters.find(dm->alias);
++		return it == masters.end() ? nullptr : &it->second;
++	}
++	template<typename T>
++	bool IsForbidden(const T* dm) const {
++		return forbidden_masters.count(dm->code) || (dm->alias && forbidden_masters.count(dm->alias));
++	}
++	// The domain of a Deck Master: its "#@dm" line (if any) combined with its
++	// own attribute, race and archetypes.
++	template<typename T>
++	DomainEntry Get(const T* dm) const {
++		DomainEntry domain;
++		if(const auto* entry = Find(dm))
++			domain = *entry;
++		domain.attribute |= dm->attribute;
++		domain.race |= dm->race;
++		for(const auto setcode : dm->setcodes) {
++			if(setcode)
++				domain.setcodes.push_back(setcode);
++		}
++		std::sort(domain.setcodes.begin(), domain.setcodes.end());
++		domain.setcodes.erase(std::unique(domain.setcodes.begin(), domain.setcodes.end()), domain.setcodes.end());
++		return domain;
++	}
++private:
++	static std::vector<std::string_view> Split(std::string_view text, std::string_view separators) {
++		std::vector<std::string_view> res;
++		size_t pos = 0;
++		while((pos = text.find_first_not_of(separators, pos)) != std::string_view::npos) {
++			const auto end = text.find_first_of(separators, pos);
++			res.push_back(text.substr(pos, end == std::string_view::npos ? std::string_view::npos : end - pos));
++			if(end == std::string_view::npos)
++				break;
++			pos = end;
++		}
++		return res;
++	}
++	static bool ParseUint(std::string_view text, uint64_t base, uint64_t limit, uint64_t& out) {
++		if(text.empty())
++			return false;
++		uint64_t value = 0;
++		for(const auto c : text) {
++			uint64_t digit;
++			if(c >= '0' && c <= '9')
++				digit = c - '0';
++			else if(base == 16 && c >= 'a' && c <= 'f')
++				digit = c - 'a' + 10;
++			else if(base == 16 && c >= 'A' && c <= 'F')
++				digit = c - 'A' + 10;
++			else
++				return false;
++			if(value > (limit - digit) / base)
++				return false;
++			value = value * base + digit;
++		}
++		out = value;
++		return true;
++	}
++};
++
++// Whether a card may be in the Main or Extra Deck of a Deck Master with the
++// given domain. get_card(code) returns the card data of a code or nullptr; it
++// is used for the archetypes of the card's alias row.
++template<typename T, typename F>
++bool IsInDomain(const T* card, const DomainEntry& domain, F&& get_card) {
++	if(card->type & (TYPE_SPELL | TYPE_TRAP))
++		return true;
++	if(!(card->type & TYPE_MONSTER))
++		return false;
++	if((card->attribute & ATTRIBUTE_DIVINE) || (card->race & RACE_DIVINE))
++		return true;
++	const auto named = [&](uint32_t code) {
++		return std::binary_search(domain.names.begin(), domain.names.end(), code);
++	};
++	if(named(card->code) || (card->alias && named(card->alias)))
++		return true;
++	const auto in_archetype = [&](const std::vector<uint16_t>& setcodes) {
++		for(const auto setcode : setcodes) {
++			if(!setcode)
++				continue;
++			for(const auto archetype : domain.setcodes) {
++				if((archetype & 0xfff) == (setcode & 0xfff) && (archetype & setcode) == archetype)
++					return true;
++			}
++		}
++		return false;
++	};
++	if(in_archetype(card->setcodes))
++		return true;
++	if(card->alias) {
++		if(const T* alias_card = get_card(card->alias); alias_card && in_archetype(alias_card->setcodes))
++			return true;
++	}
++	return (card->attribute & domain.attribute) || (card->race & domain.race);
++}
++
++}
++
++#endif //DOMAIN_LIST_H
+diff --git a/gframe/duelclient.cpp b/gframe/duelclient.cpp
+index 17e116df..62b8da2e 100644
+--- a/gframe/duelclient.cpp
++++ b/gframe/duelclient.cpp
+@@ -546,6 +546,29 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
+ 				text = epro::sprintf(fmt, curcount, mainmax);
+ 				break;
+ 			}
++			case DeckError::DOMAIN_DECK_MASTER: {
++				text = gDataManager->HasSysString(7115) ? gDataManager->GetSysString(7115).data()
++					: L"Domain: your deck needs exactly 1 Deck Master, a Main or Extra Deck monster.";
++				break;
++			}
++			case DeckError::DOMAIN_OUT_OF_DOMAIN: {
++				const auto fmt = gDataManager->HasSysString(7116) ? gDataManager->GetSysString(7116)
++					: L"Domain: \"%ls\" is outside your Deck Master's domain."sv;
++				text = epro::sprintf(fmt, gDataManager->GetName(code));
++				break;
++			}
++			case DeckError::DOMAIN_SINGLETON: {
++				const auto fmt = gDataManager->HasSysString(7117) ? gDataManager->GetSysString(7117)
++					: L"Domain: only 1 copy of \"%ls\" is allowed."sv;
++				text = epro::sprintf(fmt, gDataManager->GetName(code));
++				break;
++			}
++			case DeckError::DOMAIN_FORBIDDEN_DM: {
++				const auto fmt = gDataManager->HasSysString(7118) ? gDataManager->GetSysString(7118)
++					: L"Domain: \"%ls\" cannot be your Deck Master."sv;
++				text = epro::sprintf(fmt, gDataManager->GetName(code));
++				break;
++			}
+ 			default: {
+ 				text = gDataManager->GetSysString(1406).data();
+ 				break;
+@@ -754,7 +777,9 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
+ 		mainGame->dInfo.duel_field = mainGame->GetMasterRule(params & ~DUEL_TCG_SEGOC_NONPUBLIC, pkt.info.forbiddentypes, &rule);
+ 		if(mainGame->dInfo.compat_mode)
+ 			rule = pkt.info.duel_rule;
+-		if (rule >= 6) {
++		if(!mainGame->dInfo.compat_mode && (params & DUEL_DOMAIN)) {
++			str.append(epro::format(L"*{}\n", gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111) : L"Domain"sv));
++		} else if (rule >= 6) {
+ 			if(params == DUEL_MODE_SPEED) {
+ 				str.append(epro::format(L"*{}\n", gDataManager->GetSysString(1258)));
+ 			} else if(params == DUEL_MODE_RUSH) {
+@@ -4720,6 +4745,8 @@ void DuelClient::BroadcastReply(evutil_socket_t fd, short events, void* arg) {
+ 				if(!is_compact_mode) {
+ 					auto duel_flag = (((uint64_t)packet.host.duel_flag_low) | ((uint64_t)packet.host.duel_flag_high) << 32);
+ 					mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC | DUEL_PSEUDO_SHUFFLE), packet.host.forbiddentypes, &rule);
++					if(duel_flag & DUEL_DOMAIN)
++						return std::wstring{ gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111) : L"Domain"sv };
+ 					if(rule == 6) {
+ 						if(duel_flag == DUEL_MODE_GOAT)
+ 							return L"GOAT";
+diff --git a/gframe/game.cpp b/gframe/game.cpp
+index 44f6cee2..65df741b 100644
+--- a/gframe/game.cpp
++++ b/gframe/game.cpp
+@@ -3118,6 +3118,10 @@ void Game::UpdateDuelParam() {
+ 				flag |= 0x100ULL << i;
+ 		}
+ 	}
++	// Domain is not a custom rule checkbox: keep it while the other options
++	// still are the Domain ones.
++	if((duel_param & DUEL_DOMAIN) && (flag & ~DUEL_TCG_SEGOC_NONPUBLIC) == DUEL_MODE_MR5)
++		flag |= DUEL_DOMAIN;
+ 	constexpr uint32_t limits[] = { TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
+ 	uint32_t flag2 = 0;
+ 	for (auto i = 0u; i < sizeofarr(chkTypeLimit); ++i) {
+@@ -3129,7 +3133,7 @@ void Game::UpdateDuelParam() {
+ 	case DUEL_MODE_SPEED: {
+ 		cbDuelRule->setSelected(5);
+ 		if(flag2 == DUEL_MODE_MR5_FORB) {
+-			cbDuelRule->removeItem(9);
++			cbDuelRule->removeItem(10);
+ 			break;
+ 		}
+ 	}
+@@ -3137,7 +3141,7 @@ void Game::UpdateDuelParam() {
+ 	case DUEL_MODE_RUSH: {
+ 		cbDuelRule->setSelected(6);
+ 		if(flag2 == DUEL_MODE_MR5_FORB) {
+-			cbDuelRule->removeItem(9);
++			cbDuelRule->removeItem(10);
+ 			break;
+ 		}
+ 	}
+@@ -3145,7 +3149,7 @@ void Game::UpdateDuelParam() {
+ 	case DUEL_MODE_GOAT: {
+ 		cbDuelRule->setSelected(7);
+ 		if(flag2 == DUEL_MODE_MR1_FORB) {
+-			cbDuelRule->removeItem(9);
++			cbDuelRule->removeItem(10);
+ 			break;
+ 		}
+ 	}
+@@ -3156,7 +3160,7 @@ void Game::UpdateDuelParam() {
+ 		case DUEL_MODE_MR##MR:{ \
+ 			cbDuelRule->setSelected(MR - 1); \
+ 			if (flag2 == DUEL_MODE_MR##MR##_FORB) { \
+-				cbDuelRule->removeItem(9); break; } \
++				cbDuelRule->removeItem(10); break; } \
+ 			} \
+ 			[[fallthrough]];
+ 			CHECK(1)
+@@ -3168,14 +3172,24 @@ void Game::UpdateDuelParam() {
+ 		case DUEL_MODE_GENESYS: {
+ 			cbDuelRule->setSelected(8);
+ 			if(flag2 == DUEL_MODE_GENESYS_FORB) {
+-				cbDuelRule->removeItem(9);
++				cbDuelRule->removeItem(10);
+ 				break;
+ 			}
+ 		}
+ 		[[fallthrough]];
++		case DUEL_MODE_DOMAIN: {
++			if((flag & ~DUEL_TCG_SEGOC_NONPUBLIC) == DUEL_MODE_DOMAIN) {
++				cbDuelRule->setSelected(9);
++				if(flag2 == DUEL_MODE_DOMAIN_FORB) {
++					cbDuelRule->removeItem(10);
++					break;
++				}
++			}
++		}
++		[[fallthrough]];
+ 		default: {
+ 			cbDuelRule->addItem(gDataManager->GetSysString(1630).data());
+-			cbDuelRule->setSelected(9);
++			cbDuelRule->setSelected(10);
+ 			break;
+ 		}
+ 		}
+@@ -3184,15 +3198,38 @@ void Game::UpdateDuelParam() {
+ 	duel_param = flag;
+ 	forbiddentypes = flag2;
+ }
+-// A Genesys banlist forces the Genesys rule: original field layout without
+-// Pendulum Zones or Extra Monster Zones. The rule selector and those zone
+-// options are locked while such a list is selected.
+-void Game::ApplyGenesysHostRules() {
+-	const auto sel = cbHostLFList->getSelected();
+-	const auto* list = sel >= 0 ? gdeckManager->GetLFList(cbHostLFList->getItemData(sel)) : nullptr;
++// A Genesys banlist forces the Genesys rule (original field layout without
++// Pendulum Zones or Extra Monster Zones) and a Domain banlist the Domain rule.
++// The rule selector and the options fixed by the rule are locked while such a
++// list is selected. The Domain rule only exists with a Domain list: choosing
++// it selects one, leaving the list leaves the rule.
++void Game::ApplyFormatHostRules(bool rule_changed) {
++	const auto FindList = [this]() -> const LFList* {
++		const auto sel = cbHostLFList->getSelected();
++		return sel >= 0 ? gdeckManager->GetLFList(cbHostLFList->getItemData(sel)) : nullptr;
++	};
++	if(rule_changed && cbDuelRule->getSelected() == 9) {
++		const auto* list = FindList();
++		for(irr::u32 i = 0; (!list || !list->domain) && i < cbHostLFList->getItemCount(); ++i) {
++			const auto* candidate = gdeckManager->GetLFList(cbHostLFList->getItemData(i));
++			if(candidate && candidate->domain) {
++				cbHostLFList->setSelected(i);
++				list = candidate;
++			}
++		}
++	}
++	const auto* list = FindList();
+ 	const bool genesys = list && list->genesys;
+-	if(genesys && cbDuelRule->getSelected() != 8) {
+-		cbDuelRule->setSelected(8);
++	const bool domain = list && list->domain;
++	int rule = -1;
++	if(genesys)
++		rule = 8;
++	else if(domain)
++		rule = 9;
++	else if(cbDuelRule->getSelected() == 9)
++		rule = 4;
++	if(rule >= 0 && cbDuelRule->getSelected() != rule) {
++		cbDuelRule->setSelected(rule);
+ 		irr::SEvent event{};
+ 		event.EventType = irr::EET_GUI_EVENT;
+ 		event.GUIEvent.Caller = cbDuelRule;
+@@ -3200,11 +3237,22 @@ void Game::ApplyGenesysHostRules() {
+ 		event.GUIEvent.EventType = irr::gui::EGET_COMBO_BOX_CHANGED;
+ 		menuHandler.OnEvent(event);
+ 	}
+-	cbDuelRule->setEnabled(!genesys);
+-	LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
++	cbDuelRule->setEnabled(!genesys && !domain);
++	// Domain: the field, card types and deck sizes are those of the rule.
++	for(auto* chk : chkCustomRules)
++		chk->setEnabled(!domain);
++	for(auto* chk : chkTypeLimit)
++		chk->setEnabled(!domain);
++	for(auto* eb : { ebMainMin, ebMainMax, ebExtraMin, ebExtraMax, ebSideMin, ebSideMax })
++		eb->setEnabled(!domain);
++	if(!domain)
++		LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
+ }
+ int Game::BotRuleFilter() const {
+ 	const auto sel = cbDuelRule->getSelected();
++	// No bot plays Domain: use a filter value no bot lists.
++	if(sel == 9)
++		return 99;
+ 	return sel == 8 ? 5 : sel + 1;
+ }
+ void Game::LockGenesysZones(bool lock) {
+@@ -3562,6 +3610,7 @@ void Game::ReloadCBDuelRule(irr::gui::IGUIComboBox* cb) {
+ 	cb->addItem(gDataManager->GetSysString(1259).data());
+ 	cb->addItem(gDataManager->GetSysString(1248).data());
+ 	cb->addItem(gDataManager->HasSysString(7103) ? gDataManager->GetSysString(7103).data() : L"Genesys");
++	cb->addItem(gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111).data() : L"Domain");
+ }
+ void Game::ReloadCBRule() {
+ 	cbRule->clear();
+@@ -3656,6 +3705,7 @@ void Game::ReloadElementsStrings() {
+ 
+ 	prev = cbDuelRule->getSelected();
+ 	if (prev >= 7) {
++		// keeps Genesys, Domain and the custom rule
+ 		UpdateDuelParam();
+ 	} else {
+ 		ReloadCBDuelRule();
+diff --git a/gframe/game.h b/gframe/game.h
+index 15d4be1d..2996687c 100644
+--- a/gframe/game.h
++++ b/gframe/game.h
+@@ -571,8 +571,9 @@ public:
+ 
+ 	uint8_t LocalPlayer(uint8_t player);
+ 	void UpdateDuelParam();
+-	void ApplyGenesysHostRules();
+-	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list.
++	void ApplyFormatHostRules(bool rule_changed = false);
++	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list,
++	// the Domain rule (index 9) matches no bot.
+ 	int BotRuleFilter() const;
+ 	void LockGenesysZones(bool lock);
+ 	void UpdateExtraRules(bool set = false);
+diff --git a/gframe/generic_duel.cpp b/gframe/generic_duel.cpp
+index 2dd749ee..4254c156 100644
+--- a/gframe/generic_duel.cpp
++++ b/gframe/generic_duel.cpp
+@@ -370,7 +370,15 @@ void GenericDuel::PlayerReady(DuelPlayer* dp, bool is_ready) {
+ 	if(dueler.ready == is_ready)
+ 		return;
+ 	if(is_ready) {
+-		DeckError deck_error = DeckManager::CheckDeckSize(dueler.pdeck, host_info.sizes);
++		DeckError deck_error{ DeckError::NONE };
++		// Domain: the Deck Master is checked first, even without content checks.
++		if(const auto* lflist = gdeckManager->GetLFList(host_info.lflist); IsDomain() && lflist && lflist->domain) {
++			deck_error = DeckManager::CheckDeckMaster(dueler.pdeck, *lflist, !host_info.no_check_deck_content);
++			if(deck_error.type == DeckError::DOMAIN_DECK_MASTER && !dueler.pdeck.master)
++				deck_error.code = dueler.master_code;
++		}
++		if(deck_error.type == DeckError::NONE)
++			deck_error = DeckManager::CheckDeckSize(dueler.pdeck, host_info.sizes);
+ 		if(deck_error.type == DeckError::NONE && !host_info.no_check_deck_content) {
+ 			if(dueler.deck_error) {
+ 				deck_error.type = DeckError::UNKNOWNCARD;
+@@ -419,11 +427,15 @@ void GenericDuel::UpdateDeck(DuelPlayer* dp, void* pdata, uint32_t len) {
+ 		return;
+ 	}
+ 	bool rituals_in_extra = host_info.duel_flag_high & (DUEL_EXTRA_DECK_RITUAL >> 32);
++	// Domain: optional Deck Master trailer after the side codes.
++	const auto cards_size = (mainc + sidec) * sizeof(uint32_t);
++	const auto master = DeckManager::ReadDeckMasterTrailer(deckbuf + cards_size, len - 8 - cards_size);
+ 	if(match_result.empty()) {
+-		dueler.deck_error = DeckManager::LoadDeckFromBuffer(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra ? RITUAL_LOCATION::EXTRA : RITUAL_LOCATION::MAIN);
++		dueler.deck_error = DeckManager::LoadDeckFromBuffer(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra ? RITUAL_LOCATION::EXTRA : RITUAL_LOCATION::MAIN, master);
++		dueler.master_code = master;
+ 		dueler.odeck = dueler.pdeck;
+ 	} else {
+-		if(DeckManager::LoadSide(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra)) {
++		if(DeckManager::LoadSide(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra, master, IsDomain())) {
+ 			dueler.ready = true;
+ 			NetServer::SendPacketToPlayer(dp, STOC_DUEL_START);
+ 			if(CheckReady()) {
+@@ -575,11 +587,15 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
+ 	const auto seed = Utils::GetRandomNumberGeneratorSeed();
+ 	auto replay_header = ExtendedReplayHeader::CreateDefaultHeader(REPLAY_YRP1, static_cast<uint32_t>(time(nullptr)));
+ 	replay_header.SetSeed(seed);
++	// Domain: the decks in the YRP1 replay carry the Deck Masters.
++	if(IsDomain())
++		replay_header.base.flag |= REPLAY_DOMAIN;
+ 	last_replay.BeginRecord(true, EPRO_TEXT("./replay/_LastReplay.yrp"));
+ 	last_replay.WriteHeader(replay_header);
+ 	//records the replay with the new system
+ 	new_replay.BeginRecord();
+ 	replay_header.base.id = REPLAY_YRPX;
++	replay_header.base.flag &= ~REPLAY_DOMAIN;
+ 	new_replay.WriteHeader(replay_header);
+ 	last_replay.Write<uint32_t>(static_cast<uint32_t>(players.home.size()), false);
+ 	new_replay.Write<uint32_t>(static_cast<uint32_t>(players.home.size()), false);
+@@ -662,6 +678,7 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
+ 			OCG_DuelNewCard(pduel, &card_info);
+ 			last_replay.Write<uint32_t>(dueler.pdeck.extra[i]->code, false);
+ 		}
++		AddDeckMaster(dueler, card_info);
+ 	}
+ 	card_info.team = 1;
+ 	card_info.con = 1;
+@@ -687,6 +704,7 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
+ 			OCG_DuelNewCard(pduel, &card_info);
+ 			last_replay.Write<uint32_t>(dueler.pdeck.extra[i]->code, false);
+ 		}
++		AddDeckMaster(dueler, card_info);
+ 	}
+ 	last_replay.Write<uint32_t>(static_cast<uint32_t>(extracards.size()), false);
+ 	for (auto it = extracards.crbegin(), end = extracards.crend(); it != end; ++it) {
+@@ -727,6 +745,26 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
+ 	OCG_StartDuel(pduel);
+ 	Process();
+ }
++bool GenericDuel::IsDomain() const {
++	return host_info.duel_flag_high & (DUEL_DOMAIN >> 32);
++}
++// Domain: the Deck Master goes in right after its duelist's Extra Deck, and
++// the replay deck block gets the Deck Master count and code.
++void GenericDuel::AddDeckMaster(const duelist& dueler, OCG_NewCardInfo card_info) {
++	if(!IsDomain())
++		return;
++	const auto* master = dueler.pdeck.master;
++	last_replay.Write<uint32_t>(master ? 1 : 0, false);
++	if(!master)
++		return;
++	card_info.duelist = 0;
++	card_info.code = master->code;
++	card_info.loc = LOCATION_DECK_MASTER;
++	card_info.seq = 0;
++	card_info.pos = POS_FACEDOWN;
++	OCG_DuelNewCard(pduel, &card_info);
++	last_replay.Write<uint32_t>(master->code, false);
++}
+ void GenericDuel::Process() {
+ 	std::vector<uint8_t> duelBuffer;
+ 	uint32_t engFlag = 0;
+@@ -870,6 +908,13 @@ void GenericDuel::Sending(CoreUtils::Packet& packet, int& return_value, bool& re
+ 			ResendToAll();
+ 			break;
+ 		}
++		case HINT_DMZ:
++		case HINT_DMZ_REMOVE: {
++			SEND(nullptr);
++			ResendToAll();
++			packets_cache.push_back(packet);
++			break;
++		}
+ 		case 200: {
+ 			SEND(nullptr);
+ 			for(auto& dueler : (player == 0) ? players.home : players.opposing)
+diff --git a/gframe/generic_duel.h b/gframe/generic_duel.h
+index e3d85aff..0958df5d 100644
+--- a/gframe/generic_duel.h
++++ b/gframe/generic_duel.h
+@@ -61,9 +61,10 @@ protected:
+ 		Deck odeck{};
+ 		Deck pdeck{};
+ 		uint32_t deck_error;
++		uint32_t master_code{ 0 };
+ 		duelist() : player(0), ready(false), deck_error(0) {}
+ 		duelist(DuelPlayer* _player) : player(_player), ready(false), deck_error(0) {}
+-		void Clear() { player = nullptr; ready = false; pdeck.clear(); odeck.clear(); deck_error = 0; }
++		void Clear() { player = nullptr; ready = false; pdeck.clear(); odeck.clear(); deck_error = 0; master_code = 0; }
+ 		operator bool() const {
+ 			return !!player;
+ 		}
+@@ -86,6 +87,8 @@ protected:
+ 	void Catchup(DuelPlayer* dp);
+ 	uint8_t GetPos(DuelPlayer* dp);
+ 	void OrderPlayers(std::vector<duelist>& players, size_t offset = 0);
++	bool IsDomain() const;
++	void AddDeckMaster(const duelist& dueler, OCG_NewCardInfo card_info);
+ 	template<typename T, typename T2>
+ 	inline void Iter(T& list, const T2& func) {
+ 		for(auto& dlr : list) {
+diff --git a/gframe/menu_handler.cpp b/gframe/menu_handler.cpp
+index b9b77713..ec06b5a6 100644
+--- a/gframe/menu_handler.cpp
++++ b/gframe/menu_handler.cpp
+@@ -36,7 +36,8 @@ static void UpdateDeck() {
+ 	const auto& deck = mainGame->deckBuilder.GetCurrentDeck();
+ 	uint8_t deckbuf[0xf000];
+ 	auto* pdeck = deckbuf;
+-	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
++	// counts, cards and the Deck Master trailer
++	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 4;
+ 	const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
+ 	if(totsize > max_deck_size)
+ 		return;
+@@ -48,6 +49,10 @@ static void UpdateDeck() {
+ 		BufferIO::Write<uint32_t>(pdeck, pcard->code);
+ 	for(const auto& pcard : deck.side)
+ 		BufferIO::Write<uint32_t>(pdeck, pcard->code);
++	if(deck.master) {
++		BufferIO::Write<uint32_t>(pdeck, DECK_MASTER_TRAILER);
++		BufferIO::Write<uint32_t>(pdeck, deck.master->code);
++	}
+ 	DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
+ 	gdeckManager->sent_deck = mainGame->deckBuilder.GetCurrentDeck();
+ }
+@@ -221,7 +226,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 					mainGame->ebHostPort->setVisible(true);
+ 					mainGame->stHostNotes->setVisible(false);
+ 					mainGame->ebHostNotes->setVisible(false);
+-					mainGame->ApplyGenesysHostRules();
++					mainGame->ApplyFormatHostRules();
+ 					mainGame->ShowElement(mainGame->wCreateHost);
+ 				}
+ 				break;
+@@ -235,7 +240,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 				mainGame->ebHostPort->setVisible(false);
+ 				mainGame->stHostNotes->setVisible(true);
+ 				mainGame->ebHostNotes->setVisible(true);
+-				mainGame->ApplyGenesysHostRules();
++				mainGame->ApplyFormatHostRules();
+ 				mainGame->ShowElement(mainGame->wCreateHost);
+ 				break;
+ 			}
+@@ -470,7 +475,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 					break;
+ 				const auto replay_name = Utils::GetFileName(ReplayMode::cur_replay.GetReplayName());
+ 				for(size_t i = 0; i < decks.size(); i++) {
+-					DeckManager::SaveDeck(epro::format(EPRO_TEXT("{} player{:02} {}"), replay_name, i, sanitize(Utils::ToPathString(players[i]))), decks[i].main_deck, decks[i].extra_deck, cardlist_type());
++					DeckManager::SaveDeck(epro::format(EPRO_TEXT("{} player{:02} {}"), replay_name, i, sanitize(Utils::ToPathString(players[i]))), decks[i].main_deck, decks[i].extra_deck, cardlist_type(), decks[i].master);
+ 				}
+ 				mainGame->stACMessage->setText(gDataManager->GetSysString(1367).data());
+ 				mainGame->PopupElement(mainGame->wACMessage, 20);
+@@ -940,6 +945,11 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 						mainGame->forbiddentypes = DUEL_MODE_GENESYS_FORB;
+ 						break;
+ 					}
++					case 9:	{
++						mainGame->duel_param = DUEL_MODE_DOMAIN;
++						mainGame->forbiddentypes = DUEL_MODE_DOMAIN_FORB;
++						break;
++					}
+ 					}
+ 	#undef CHECK
+ 					mainGame->duel_param |= tcg;
+@@ -983,6 +993,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 				static constexpr DeckSizes rush_deck_sizes{ {40,60}, {0,15}, {0,15} };
+ 				static constexpr DeckSizes speed_deck_sizes{ {20,30}, {0,6}, {0,6} };
+ 				static constexpr DeckSizes goat_deck_sizes{ {40,60}, {0,999}, {0,15} };
++				static constexpr DeckSizes domain_deck_sizes{ {60,60}, {0,15}, {0,0} };
+ 				mainGame->chkTcgRulings->setChecked(false);
+ 				auto combobox = static_cast<irr::gui::IGUIComboBox*>(event.GUIEvent.Caller);
+ #define CHECK(MR) case (MR - 1): { mainGame->duel_param = DUEL_MODE_MR##MR; mainGame->forbiddentypes = DUEL_MODE_MR##MR##_FORB;\
+@@ -1022,9 +1033,16 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 					mainGame->ebStartHand->setText(L"5");
+ 					goto remove;
+ 				}
++				case 9:	{
++					mainGame->duel_param = DUEL_MODE_DOMAIN;
++					setDeckSizes(domain_deck_sizes);
++					mainGame->forbiddentypes = DUEL_MODE_DOMAIN_FORB;
++					mainGame->ebStartHand->setText(L"5");
++					goto remove;
++				}
+ 				default: break;
+ 				remove:
+-				combobox->removeItem(9);
++				combobox->removeItem(10);
+ 				mainGame->UpdateExtraRules();
+ 				}
+ #undef CHECK
+@@ -1047,11 +1065,14 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
+ 				static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
+ 				for(auto i = 0u; i < sizeofarr(mainGame->chkTypeLimit); ++i)
+ 					mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
+-				mainGame->LockGenesysZones(combobox == mainGame->cbDuelRule && combobox->getSelected() == 8);
++				if(combobox == mainGame->cbDuelRule)
++					mainGame->ApplyFormatHostRules(true);
++				else
++					mainGame->LockGenesysZones(false);
+ 				break;
+ 			}
+ 			case COMBOBOX_HOST_LFLIST: {
+-				mainGame->ApplyGenesysHostRules();
++				mainGame->ApplyFormatHostRules();
+ 				break;
+ 			}
+ 			case COMBOBOX_BOT_DECK: {
+diff --git a/gframe/netserver.cpp b/gframe/netserver.cpp
+index cdbaab05..4bc2295a 100644
+--- a/gframe/netserver.cpp
++++ b/gframe/netserver.cpp
+@@ -358,12 +358,6 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
+ 			NetServer::SendPacketToPlayer(dp, STOC_ERROR_MSG, vererr);
+ 			return;
+ 		}
+-		pkt.info.team1 = std::max(1, std::min(pkt.info.team1, 3));
+-		pkt.info.team2 = std::max(1, std::min(pkt.info.team2, 3));
+-		duel_mode = new GenericDuel(pkt.info.team1, pkt.info.team2, !!(pkt.info.duel_flag_low & DUEL_RELAY), pkt.info.best_of);
+-		duel_mode->etimer = event_new(net_evbase, 0, EV_TIMEOUT | EV_PERSIST, GenericDuel::GenericTimer, duel_mode);
+-		timeval timeout = { 1, 0 };
+-		event_add(duel_mode->etimer, &timeout);
+ 		uint32_t hash = 1;
+ 		for(auto lfit = gdeckManager->_lfList.begin(); lfit != gdeckManager->_lfList.end(); ++lfit) {
+ 			if(pkt.info.lflist == lfit->hash) {
+@@ -373,12 +367,35 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
+ 		}
+ 		if(hash == 1)
+ 			pkt.info.lflist = gdeckManager->_lfList[0].hash;
++		const auto* lflist = gdeckManager->GetLFList(pkt.info.lflist);
+ 		// Genesys lists force the Genesys field: no Pendulum Zones, no Extra
+ 		// Monster Zones, no Link or Pendulum Monsters.
+-		if(const auto* lflist = gdeckManager->GetLFList(pkt.info.lflist); lflist && lflist->genesys) {
++		if(lflist && lflist->genesys) {
+ 			pkt.info.duel_flag_low &= ~static_cast<uint32_t>(DUEL_PZONE | DUEL_SEPARATE_PZONE | DUEL_EMZONE);
+ 			pkt.info.forbiddentypes |= DUEL_MODE_GENESYS_FORB;
+ 		}
++		// Domain follows the banlist only: a Domain list forces the Domain
++		// rule (1 vs 1, its deck sizes, no extra rules), any other list
++		// clears it.
++		if(lflist && lflist->domain) {
++			static constexpr DeckSizes domain_deck_sizes{ {60,60}, {0,15}, {0,0} };
++			// Only the TCG chain building option is kept.
++			const auto tcg = pkt.info.duel_flag_high & static_cast<uint32_t>(DUEL_TCG_SEGOC_NONPUBLIC >> 32);
++			pkt.info.duel_flag_low = static_cast<uint32_t>(DUEL_MODE_DOMAIN & 0xffffffff);
++			pkt.info.duel_flag_high = static_cast<uint32_t>(DUEL_MODE_DOMAIN >> 32) | tcg;
++			pkt.info.forbiddentypes = DUEL_MODE_DOMAIN_FORB;
++			pkt.info.sizes = domain_deck_sizes;
++			pkt.info.team1 = pkt.info.team2 = 1;
++			pkt.info.extra_rules = 0;
++		} else {
++			pkt.info.duel_flag_high &= ~static_cast<uint32_t>(DUEL_DOMAIN >> 32);
++		}
++		pkt.info.team1 = std::max(1, std::min(pkt.info.team1, 3));
++		pkt.info.team2 = std::max(1, std::min(pkt.info.team2, 3));
++		duel_mode = new GenericDuel(pkt.info.team1, pkt.info.team2, !!(pkt.info.duel_flag_low & DUEL_RELAY), pkt.info.best_of);
++		duel_mode->etimer = event_new(net_evbase, 0, EV_TIMEOUT | EV_PERSIST, GenericDuel::GenericTimer, duel_mode);
++		timeval timeout = { 1, 0 };
++		event_add(duel_mode->etimer, &timeout);
+ 		duel_mode->host_info = pkt.info;
+ 		BufferIO::DecodeUTF16(pkt.name, duel_mode->name, 20);
+ 		BufferIO::DecodeUTF16(pkt.pass, duel_mode->pass, 20);
+diff --git a/gframe/network.h b/gframe/network.h
+index 68bc342e..4f0f3cd3 100644
+--- a/gframe/network.h
++++ b/gframe/network.h
+@@ -37,6 +37,10 @@ static inline bool operator!=(const DeckSizes& one, const DeckSizes& other) {
+ 	return !(one == other);
+ }
+ 
++// Domain format: CTOS_UPDATE_DECK carries the Deck Master after the side
++// codes as [u32 DECK_MASTER_TRAILER][u32 code]. Older servers ignore it.
++constexpr uint32_t DECK_MASTER_TRAILER = 0x215A4D44; // "DMZ!"
++
+ struct HostInfo {
+ 	uint32_t lflist;
+ 	uint8_t rule;
+@@ -123,7 +127,14 @@ struct DeckError {
+ 		TOOMANYLEGENDS,
+ 		TOOMANYSKILLS,
+ 		// 0xE and 0xF are reserved by Multirole (CARD_TCG_PRE, CARD_OCG_PRE).
+-		GENESYSPOINTS = 0x10
++		GENESYSPOINTS = 0x10,
++		// Domain format: missing or invalid Deck Master (code = its code or
++		// 0), card outside the Deck Master's domain, second copy of a card,
++		// forbidden Deck Master.
++		DOMAIN_DECK_MASTER = 0x11,
++		DOMAIN_OUT_OF_DOMAIN = 0x12,
++		DOMAIN_SINGLETON = 0x13,
++		DOMAIN_FORBIDDEN_DM = 0x14
+ 	};
+ 	DERR_TYPE type = DERR_TYPE::NONE;
+ 	struct {
+diff --git a/gframe/old_replay_mode.cpp b/gframe/old_replay_mode.cpp
+index a72c88a4..310e25bf 100644
+--- a/gframe/old_replay_mode.cpp
++++ b/gframe/old_replay_mode.cpp
+@@ -136,6 +136,17 @@ namespace ygo {
+ 				OCG_DuelNewCard(pduel, &card_info);
+ 			}
+ 			const auto& decks = cur_yrp->GetPlayerDecks();
++			// Domain: each Deck Master right after its duelist's Extra Deck.
++			const auto add_master = [&](const ReplayDeck& deck, OCG_NewCardInfo info) {
++				if(!deck.master)
++					return;
++				info.duelist = 0;
++				info.code = deck.master;
++				info.loc = LOCATION_DECK_MASTER;
++				info.seq = 0;
++				info.pos = POS_FACEDOWN;
++				OCG_DuelNewCard(pduel, &info);
++			};
+ 			for(int i = 0; i < mainGame->dInfo.team1; i++) {
+ 				card_info.duelist = i;
+ 				card_info.loc = LOCATION_DECK;
+@@ -148,6 +159,7 @@ namespace ygo {
+ 					card_info.code = card;
+ 					OCG_DuelNewCard(pduel, &card_info);
+ 				}
++				add_master(decks[i], card_info);
+ 			}
+ 			card_info.team = 1;
+ 			card_info.con = 1;
+@@ -163,6 +175,7 @@ namespace ygo {
+ 					card_info.code = card;
+ 					OCG_DuelNewCard(pduel, &card_info);
+ 				}
++				add_master(decks[i + mainGame->dInfo.team1], card_info);
+ 			}
+ 			if(replay_header.base.flag & REPLAY_HAND_TEST) {
+ 				const char cmd[] = "Debug.ReloadFieldEnd()";
+diff --git a/gframe/replay.cpp b/gframe/replay.cpp
+index 2f861592..a1ae276a 100644
+--- a/gframe/replay.cpp
++++ b/gframe/replay.cpp
+@@ -244,6 +244,13 @@ void Replay::ParseDecks() {
+ 			tmp.main_deck.push_back(Read<uint32_t>());
+ 		for(uint32_t j = 0, extra = Read<uint32_t>(); j < extra && can_read; ++j)
+ 			tmp.extra_deck.push_back(Read<uint32_t>());
++		if(pheader.base.flag & REPLAY_DOMAIN) {
++			for(uint32_t j = 0, masters = Read<uint32_t>(); j < masters && can_read; ++j) {
++				const auto code = Read<uint32_t>();
++				if(j == 0)
++					tmp.master = code;
++			}
++		}
+ 		decks.push_back(std::move(tmp));
+ 	}
+ 	replay_custom_rule_cards.clear();
+diff --git a/gframe/replay.h b/gframe/replay.h
+index b9a0fddf..47f397db 100644
+--- a/gframe/replay.h
++++ b/gframe/replay.h
+@@ -21,6 +21,9 @@ namespace ygo {
+ #define REPLAY_DIRECT_SEED	0x80
+ #define REPLAY_64BIT_DUELFLAG	0x100
+ #define REPLAY_EXTENDED_HEADER	0x200
++// Domain format: every duelist's deck block in the YRP1 replay is followed by
++// [u32 n][n x u32 Deck Master code] (n is 0 or 1).
++#define REPLAY_DOMAIN		0x400
+ 
+ #define REPLAY_YRP1			0x31707279
+ #define REPLAY_YRPX			0x58707279
+@@ -63,6 +66,7 @@ using cardlist_type = std::vector<uint32_t>;
+ 
+ struct ReplayDeck {
+ 	cardlist_type main_deck, extra_deck;
++	uint32_t master{ 0 }; // Domain: Deck Master code, 0 if none
+ };
+ 
+ using ReplayDeckList = std::vector<ReplayDeck>;
+diff --git a/gframe/server_lobby.cpp b/gframe/server_lobby.cpp
+index 367666c6..712f11b4 100644
+--- a/gframe/server_lobby.cpp
++++ b/gframe/server_lobby.cpp
+@@ -114,7 +114,9 @@ void ServerLobby::FillOnlineRooms() {
+ 		int rule;
+ 		auto duel_flag = (((uint64_t)room.info.duel_flag_low) | ((uint64_t)room.info.duel_flag_high) << 32);
+ 		mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC | DUEL_PSEUDO_SHUFFLE), room.info.forbiddentypes, &rule);
+-		if(rule == 6) {
++		if(duel_flag & DUEL_DOMAIN) {
++			roomListTable->setCellText(index, 3, gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111).data() : L"Domain");
++		} else if(rule == 6) {
+ 			if(duel_flag == DUEL_MODE_GOAT) {
+ 				roomListTable->setCellText(index, 3, L"GOAT");
+ 			} else if(duel_flag == DUEL_MODE_RUSH) {
+diff --git a/gframe/single_mode.cpp b/gframe/single_mode.cpp
+index d6233cb4..8a8064b0 100644
+--- a/gframe/single_mode.cpp
++++ b/gframe/single_mode.cpp
+@@ -111,11 +111,15 @@ restart:
+ 		replay_header.base.flag |= REPLAY_SINGLE_MODE;
+ 		if(hand_test)
+ 			replay_header.base.flag |= REPLAY_HAND_TEST;
++		// Domain: the decks in the YRP1 replay carry the Deck Masters.
++		if(hand_test && (opt & DUEL_DOMAIN))
++			replay_header.base.flag |= REPLAY_DOMAIN;
+ 		last_replay.BeginRecord(true, Replay::GetReplayFilePath(EPRO_TEXT("_LastReplay.yrp")));
+ 		last_replay.WriteHeader(replay_header);
+ 		//records the replay with the new system
+ 		new_replay.BeginRecord();
+ 		replay_header.base.id = REPLAY_YRPX;
++		replay_header.base.flag &= ~REPLAY_DOMAIN;
+ 		new_replay.WriteHeader(replay_header);
+ 		replay_stream.clear();
+ 	}
+@@ -141,11 +145,25 @@ restart:
+ 				OCG_DuelNewCard(pduel, &card_info);
+ 				last_replay.Write<uint32_t>(playerdeck.extra[i]->code, false);
+ 			}
++			// Domain: the Deck Master right after the Extra Deck.
++			if(opt & DUEL_DOMAIN) {
++				const auto* master = playerdeck.master;
++				last_replay.Write<uint32_t>(master ? 1 : 0, false);
++				if(master) {
++					card_info.code = master->code;
++					card_info.loc = LOCATION_DECK_MASTER;
++					card_info.pos = POS_FACEDOWN;
++					OCG_DuelNewCard(pduel, &card_info);
++					last_replay.Write<uint32_t>(master->code, false);
++				}
++			}
+ 		};
+ 		LoadDeck(0);
+ 		if (duelOptions.handTestNoOpponent) {
+ 			last_replay.Write<uint32_t>(0, false);
+ 			last_replay.Write<uint32_t>(0, false);
++			if(opt & DUEL_DOMAIN)
++				last_replay.Write<uint32_t>(0, false);
+ 		} else {
+ 			LoadDeck(1);
+ 		}
+@@ -380,7 +398,9 @@ bool SingleMode::SinglePlayAnalyze(CoreUtils::Packet& packet) {
+ 			case 200:
+ 			case 201:
+ 			case 202:
+-			case 203: {
++			case 203:
++			case HINT_DMZ:
++			case HINT_DMZ_REMOVE: {
+ 				analyze = true;
+ 				break;
+ 
