@@ -379,9 +379,10 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
 		// clears it.
 		if(lflist && lflist->domain) {
 			static constexpr DeckSizes domain_deck_sizes{ {60,60}, {0,15}, {0,0} };
-			// Only the TCG chain building option is kept.
+			// Only the TCG chain building and the no shuffle options are kept.
 			const auto tcg = pkt.info.duel_flag_high & static_cast<uint32_t>(DUEL_TCG_SEGOC_NONPUBLIC >> 32);
-			pkt.info.duel_flag_low = static_cast<uint32_t>(DUEL_MODE_DOMAIN & 0xffffffff);
+			const auto no_shuffle = pkt.info.duel_flag_low & static_cast<uint32_t>(DUEL_PSEUDO_SHUFFLE);
+			pkt.info.duel_flag_low = static_cast<uint32_t>(DUEL_MODE_DOMAIN & 0xffffffff) | no_shuffle;
 			pkt.info.duel_flag_high = static_cast<uint32_t>(DUEL_MODE_DOMAIN >> 32) | tcg;
 			pkt.info.forbiddentypes = DUEL_MODE_DOMAIN_FORB;
 			pkt.info.sizes = domain_deck_sizes;

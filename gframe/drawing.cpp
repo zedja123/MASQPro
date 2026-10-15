@@ -1186,7 +1186,7 @@ bool Game::IsGenesysActive() const {
 // point list.
 bool Game::IsDomainActive() const {
 	if(is_siding)
-		return (dInfo.duel_params & DUEL_DOMAIN) || deckBuilder.GetCurrentDeck().master;
+		return dInfo.duel_params & DUEL_DOMAIN;
 	return chkDomain && chkDomain->isChecked() && deckBuilder.filterList && deckBuilder.filterList->domain;
 }
 void Game::DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect) {

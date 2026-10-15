@@ -3249,6 +3249,17 @@ void Game::ApplyFormatHostRules(bool rule_changed) {
 		chk->setEnabled(!domain);
 	for(auto* eb : { ebMainMin, ebMainMax, ebExtraMin, ebExtraMax, ebSideMin, ebSideMax })
 		eb->setEnabled(!domain);
+	// Domain: no extra rules (the host clears them too).
+	if(domain) {
+		for(auto* chk : chkRules) {
+			chk->setChecked(false);
+			chk->setEnabled(false);
+		}
+		extra_rules = 0;
+	} else if(!chkRules[2]->isEnabled()) {
+		// unlocked after a Domain list
+		UpdateExtraRules();
+	}
 	if(!domain)
 		LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
 }

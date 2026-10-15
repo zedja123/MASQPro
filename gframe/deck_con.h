@@ -134,6 +134,7 @@ private:
 	DomainEntry domain_cache;
 	const CardDataC* domain_cache_master{ nullptr };
 	const LFList* domain_cache_list{ nullptr };
+	uint32_t domain_cache_hash{ 0 };
 public:
 	uint32_t hovered_code;
 	int hovered_pos;

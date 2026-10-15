@@ -1800,10 +1800,11 @@ bool DeckBuilder::IsInCurrentDomain(const CardDataC* card) {
 		return CanBeDeckMaster(card);
 	if(!filterList || !filterList->domain)
 		return true;
-	if(domain_cache_master != master || domain_cache_list != filterList) {
+	if(domain_cache_master != master || domain_cache_list != filterList || domain_cache_hash != filterList->hash) {
 		domain_cache = DeckManager::GetDomain(*filterList, master);
 		domain_cache_master = master;
 		domain_cache_list = filterList;
+		domain_cache_hash = filterList->hash;
 	}
 	return DeckManager::IsInDomain(card, domain_cache);
 }
