@@ -1330,6 +1330,9 @@ LUA_STATIC_FUNCTION(DiscardHand) {
 	auto reason = lua_get<uint32_t>(L, 5);
 	auto pgroup = pduel->new_group();
 	pduel->game_field->filter_matching_card(findex, playerid, LOCATION_HAND, 0, pgroup, pexception, pexgroup, extraargs);
+	// Domain: a Deck Master in the Deck Master Zone is never discarded
+	if(card* pcard = pduel->game_field->dmz_card(playerid); pcard)
+		pgroup->container.erase(pcard);
 	pduel->game_field->core.select_cards.assign(pgroup->container.begin(), pgroup->container.end());
 	if(pduel->game_field->core.select_cards.size() == 0) {
 		lua_pushinteger(L, 0);
@@ -3881,6 +3884,7 @@ inline int32_t is_player_can_procedure_summon_group(lua_State* L, uint32_t summo
 		core.reason_effect = peff;
 		core.reason_player = pcard->current.controler;
 		pduel->game_field->save_lp_cost();
+		dm_scope pendulum_scope(core.dm_pendulum_proc);
 		pduel->lua->add_param<LuaParam::EFFECT>(peff);
 		pduel->lua->add_param<LuaParam::CARD>(pcard);
 		pduel->lua->add_param<LuaParam::BOOLEAN>(TRUE);

@@ -114,7 +114,9 @@ void ServerLobby::FillOnlineRooms() {
 		int rule;
 		auto duel_flag = (((uint64_t)room.info.duel_flag_low) | ((uint64_t)room.info.duel_flag_high) << 32);
 		mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC | DUEL_PSEUDO_SHUFFLE), room.info.forbiddentypes, &rule);
-		if(rule == 6) {
+		if(duel_flag & DUEL_DOMAIN) {
+			roomListTable->setCellText(index, 3, gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111).data() : L"Domain");
+		} else if(rule == 6) {
 			if(duel_flag == DUEL_MODE_GOAT) {
 				roomListTable->setCellText(index, 3, L"GOAT");
 			} else if(duel_flag == DUEL_MODE_RUSH) {

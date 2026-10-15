@@ -4,7 +4,7 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-#include <algorithm> //std::sort, std::swap, std::find, std::find_if, std::min, std::none_of
+#include <algorithm> //std::sort, std::swap, std::find, std::find_if, std::min, std::max, std::none_of
 #include <tuple> //std::tie
 #include <utility> //std::move
 #include <vector>
@@ -194,6 +194,11 @@ void field::add_card(uint8_t playerid, card* pcard, uint8_t location, uint8_t se
 	}
 	}
 	pcard->current.pzone = pzone;
+	// Domain: the Deck Master changed zone type (moves on/within the field, and moves
+	// between two zones of the same type such as one hand to another, do not count)
+	if(location != 0 && pcard->is_deck_master() && pcard->previous.location != location
+		&& !((pcard->previous.location & (LOCATION_ONFIELD | LOCATION_OVERLAY)) && (location & LOCATION_ONFIELD)))
+		player[pcard->owner].dm_moved = true;
 	pcard->apply_field_effect();
 	pcard->fieldid = infos.field_id++;
 	pcard->fieldid_r = pcard->fieldid;
@@ -272,6 +277,17 @@ bool field::move_card(uint8_t playerid, card* pcard, uint8_t location, uint8_t s
 	if(pcard->is_extra_deck_monster() && (location & (LOCATION_HAND | LOCATION_DECK))) {
 		location = LOCATION_EXTRA;
 		pcard->sendto_param.position = POS_FACEDOWN_DEFENSE;
+	}
+	if(pcard->in_dmz) {
+		// Domain: a Deck Master moved out of the Deck Master Zone by something else than
+		// MoveToField (which already handled the leave); no cost, not a zone change
+		auto& owner = player[pcard->owner];
+		const bool moved = owner.dm_moved;
+		dmz_leave(pcard, false);
+		add_card(playerid, pcard, location, sequence, pzone);
+		owner.dm_moved = moved;
+		dmz_hint(pcard, HINT_DMZ_REMOVE);
+		return true;
 	}
 	if (pcard->current.location) {
 		if (pcard->current.location == location && pcard->current.pzone == pzone) {
@@ -658,7 +674,7 @@ int32_t field::is_location_useable(uint32_t playerid, uint32_t location, uint32_
 // list: store local flag in list
 // return: usable count of LOCATION_MZONE or real LOCATION_SZONE of playerid requested by uplayer (may be negative)
 int32_t field::get_useable_count(card* pcard, uint8_t playerid, uint8_t location, uint8_t uplayer, uint32_t reason, uint32_t zone, uint32_t* list) {
-	if(location == LOCATION_MZONE && pcard && pcard->current.location == LOCATION_EXTRA)
+	if(location == LOCATION_MZONE && pcard && pcard->effective_location() == LOCATION_EXTRA)
 		return get_useable_count_fromex(pcard, playerid, uplayer, zone, list);
 	else
 		return get_useable_count_other(pcard, playerid, location, uplayer, reason, zone, list);
@@ -680,7 +696,7 @@ int32_t field::get_useable_count_fromex(card* pcard, uint8_t playerid, uint8_t u
 	return useable_count;
 }
 int32_t field::get_spsummonable_count(card* pcard, uint8_t playerid, uint32_t zone, uint32_t* list) {
-	if(pcard->current.location == LOCATION_EXTRA)
+	if(pcard->effective_location() == LOCATION_EXTRA)
 		return get_spsummonable_count_fromex(pcard, playerid, playerid, zone, list);
 	else
 		return get_tofield_count(pcard, playerid, LOCATION_MZONE, playerid, LOCATION_REASON_TOFIELD, zone, list);
@@ -1031,6 +1047,11 @@ void field::reset_sequence(uint8_t playerid, uint8_t location) {
 }
 void field::swap_deck_and_grave(uint8_t playerid) {
 	auto& cur_player = player[playerid];
+	for(auto& pl : player) {
+		card* dm = pl.deck_master;
+		if(dm && !dm->in_dmz && dm->current.controler == playerid && (dm->current.location & (LOCATION_DECK | LOCATION_GRAVE)))
+			pl.dm_moved = true;
+	}
 	for(auto& pcard : cur_player.list_grave) {
 		if(core.current_chain.size() > 0)
 			core.just_sent_cards.insert(pcard);
@@ -1247,6 +1268,85 @@ void field::next_player(uint8_t playerid) {
 }
 bool field::is_flag(uint64_t flag) const {
 	return (core.duel_options & flag) == flag;
+}
+// Domain: the Deck Master of playerid, if it is in the Deck Master Zone
+card* field::dmz_card(uint8_t playerid) const {
+	if(playerid > 1)
+		return nullptr;
+	card* pcard = player[playerid].deck_master;
+	if(pcard && pcard->in_dmz)
+		return pcard;
+	return nullptr;
+}
+// Domain: effects that make a player pay to activate/summon/set a card; they see a Deck Master
+// in the Deck Master Zone where it really is (Chain Energy does not apply to it)
+bool field::dmz_is_cost_code(const effect* peffect) const {
+	if(peffect->type & EFFECT_TYPE_ACTIONS)
+		return false;
+	switch(peffect->code) {
+	case EFFECT_ACTIVATE_COST:
+	case EFFECT_SUMMON_COST:
+	case EFFECT_SPSUMMON_COST:
+	case EFFECT_MSET_COST:
+	case EFFECT_SSET_COST:
+	case EFFECT_FLIPSUMMON_COST:
+		return true;
+	default:
+		return false;
+	}
+}
+// Domain: a predicate about a proper summon returned true for the probed Deck Master
+void field::dmz_mark_probe(card* pcard, bool result) {
+	if(result && !core.dm_probes.empty() && core.dm_probes.back().pcard == pcard)
+		core.dm_probes.back().hit = true;
+}
+void field::dmz_hint(card* pcard, uint8_t hint) {
+	uint64_t data = pcard->data.code;
+	if(hint == HINT_DMZ)
+		data |= static_cast<uint64_t>(player[pcard->owner].dm_returns) << 32;
+	auto message = pduel->new_message(MSG_HINT);
+	message->write<uint8_t>(hint);
+	message->write<uint8_t>(pcard->owner);
+	message->write<uint64_t>(data);
+}
+// Domain: the Deck Master leaves the Deck Master Zone; called before it is moved,
+// while current.* still describes the zone
+void field::dmz_leave(card* pcard, bool pay_cost) {
+	auto& owner = player[pcard->owner];
+	if(pay_cost) {
+		// a rule cost: not changed or replaced by effects, no event
+		const auto cost = static_cast<int64_t>(pcard->dmz_cost());
+		const auto amount = static_cast<int32_t>(std::min<int64_t>(cost, std::max<int32_t>(owner.lp, 0)));
+		if(amount > 0) {
+			owner.lp -= amount;
+			auto message = pduel->new_message(MSG_PAY_LPCOST);
+			message->write<uint8_t>(pcard->owner);
+			message->write<uint32_t>(amount);
+		}
+	}
+	pcard->cancel_field_effect();
+	pcard->in_dmz = false;
+	pcard->previous.controler = pcard->owner;
+	pcard->previous.location = pcard->dmz_virtual_location();
+	pcard->previous.sequence = 0;
+	pcard->previous.position = pcard->current.position;
+	pcard->previous.pzone = false;
+}
+// Domain: the Deck Master returns to the Deck Master Zone from where it is now
+void field::dmz_enter(card* pcard) {
+	const auto playerid = pcard->owner;
+	pcard->enable_field_effect(false);
+	remove_card(pcard);
+	pcard->set_status(STATUS_PROC_COMPLETE, FALSE);
+	pcard->in_dmz = true;
+	add_card(playerid, pcard, 0, 0);
+	pcard->current.sequence = DMZ_SEQUENCE;
+	pcard->current.position = POS_FACEDOWN;
+	pcard->reset(RESET_TODECK, RESET_EVENT);
+	pcard->clear_relate_effect();
+	pcard->clear_card_target();
+	pcard->enable_field_effect(true);
+	pcard->refresh_disable_status();
 }
 bool field::has_separate_pzone(uint8_t p) const {
 	(void)p;
@@ -1573,22 +1673,37 @@ int32_t field::filter_matching_card(int32_t findex, uint8_t self, uint32_t locat
 	if(self != 0 && self != 1)
 		return FALSE;
 	int32_t count = 0;
+	auto accept = [&](card* pcard)->bool {
+		if(pret) {
+			*pret = pcard;
+			return true;
+		}
+		++count;
+		if(fcount && count >= fcount)
+			return true;
+		if(pgroup)
+			pgroup->container.insert(pcard);
+		return false;
+	};
 	auto checkc = [&](auto* pcard, bool(*extrafil)(card* pcard)=nullptr)->bool {
 		if(pcard && (!extrafil || extrafil(pcard))
 		   && pcard != pexception && !(pexgroup && pexgroup->has_card(pcard))
 		   && (!findex || pduel->lua->check_matching(pcard, findex, extraargs))
-		   && (!is_target || pcard->is_capable_be_effect_target(core.reason_effect, core.reason_player))) {
-			if(pret) {
-				*pret = pcard;
-				return true;
-			}
-			++count;
-			if(fcount && count >= fcount)
-				return true;
-			if(pgroup)
-				pgroup->container.insert(pcard);
-		}
+		   && (!is_target || pcard->is_capable_be_effect_target(core.reason_effect, core.reason_player)))
+			return accept(pcard);
 		return false;
+	};
+	// Domain: the player's own Deck Master in the Deck Master Zone is included only when the filter
+	// is true because the card can be properly summoned (or Normal Summoned/Set) by this effect
+	auto checkdm = [&](card* pcard)->bool {
+		if(pcard == pexception || (pexgroup && pexgroup->has_card(pcard)))
+			return false;
+		bool matched;
+		{
+			dm_probe_frame frame(core.dm_probes, pcard);
+			matched = pduel->lua->check_matching(pcard, findex, extraargs) && frame.hit();
+		}
+		return matched && accept(pcard);
 	};
 	auto mzonechk = [&checkc](auto pcard)->bool {
 		return checkc(pcard, [](auto pcard)->bool {return !pcard->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_SPSUMMON_STEP); });
@@ -1653,6 +1768,11 @@ int32_t field::filter_matching_card(int32_t findex, uint8_t self, uint32_t locat
 			return TRUE;
 		if((location & LOCATION_REMOVED) && check_list(player[self].list_remove, checkc))
 			return TRUE;
+		if(p == 0 && findex && !is_target && core.reason_player == self) {
+			card* dm = dmz_card(self);
+			if(dm && (location & dm->dmz_virtual_location()) && checkdm(dm))
+				return TRUE;
+		}
 	}
 	return FALSE;
 }
@@ -1747,6 +1867,15 @@ int32_t field::filter_field_card(uint8_t self, uint32_t location1, uint32_t loca
 			if(pgroup)
 				pgroup->container.insert(player[self].list_hand.begin(), player[self].list_hand.end());
 			count += player[self].list_hand.size();
+			// Domain: a Pendulum Summon gathers a Main Deck Deck Master as if it were in the hand
+			if(p == 0 && core.dm_pendulum_proc && core.reason_player == self) {
+				card* dm = dmz_card(self);
+				if(dm && dm->dmz_virtual_location() == LOCATION_HAND) {
+					if(pgroup)
+						pgroup->container.insert(dm);
+					++count;
+				}
+			}
 		}
 		if(location & LOCATION_DECK) {
 			if(pgroup)

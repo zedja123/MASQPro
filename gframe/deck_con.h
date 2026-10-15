@@ -7,6 +7,7 @@
 #include <map>
 #include <vector>
 #include "deck.h"
+#include "domain_list.h"
 
 namespace ygo {
 
@@ -39,6 +40,7 @@ public:
 		LIMITATION_FILTER_OCG_TCG_CUSTOM,
 		LIMITATION_FILTER_PRERELEASE_CUSTOM,
 		LIMITATION_FILTER_GENESYS_POINTS,
+		LIMITATION_FILTER_IN_DOMAIN,
 		LIMITATION_FILTER_ALL
 	};
 	enum SEARCH_MODIFIER {
@@ -61,9 +63,14 @@ public:
 	void SetCurrentDeck(Deck new_deck) {
 		current_deck = std::move(new_deck);
 		RefreshLimitationStatus();
+		OnDeckMasterChanged();
 	}
 	void StartFilter(bool force_refresh = false);
 	void RefreshCurrentDeck();
+	// Domain: whether a card fits the current Deck Master's domain (with no
+	// Deck Master: whether it can be one).
+	bool IsInCurrentDomain(const CardDataC* card);
+	static bool CanBeDeckMaster(const CardDataC* card);
 private:
 	void GetHoveredCard();
 	bool FiltersChanged();
@@ -90,9 +97,12 @@ private:
 	bool push_main(const CardDataC* pointer, int seq = -1, bool forced = false);
 	bool push_extra(const CardDataC* pointer, int seq = -1, bool forced = false);
 	bool push_side(const CardDataC* pointer, int seq = -1, bool forced = false);
+	bool push_master(const CardDataC* pointer);
 	void pop_main(int seq);
 	void pop_extra(int seq);
 	void pop_side(int seq);
+	void pop_master();
+	void OnDeckMasterChanged();
 	bool check_limit(const CardDataC* pointer);
 #define DECLARE_WITH_CACHE(type, name) type name;\
 										type prev_##name;
@@ -120,6 +130,11 @@ private:
 	uint16_t main_legend_count_trap;
 	uint16_t main_skill_count;
 	Deck current_deck;
+	// Domain: domain of the current Deck Master, computed when needed.
+	DomainEntry domain_cache;
+	const CardDataC* domain_cache_master{ nullptr };
+	const LFList* domain_cache_list{ nullptr };
+	uint32_t domain_cache_hash{ 0 };
 public:
 	uint32_t hovered_code;
 	int hovered_pos;

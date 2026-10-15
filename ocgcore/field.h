@@ -90,6 +90,11 @@ struct player_info {
 	uint32_t exchanges{ 0 };
 	uint32_t tag_index{ 0 };
 	bool recharge{ false };
+	// Domain: the player's Deck Master, how many times it returned to the Deck Master Zone,
+	// and whether it changed zone type since the last open game state
+	card* deck_master{ nullptr };
+	uint32_t dm_returns{ 0 };
+	bool dm_moved{ false };
 	card_vector list_mzone;
 	card_vector list_szone;
 	card_vector list_main;
@@ -170,6 +175,35 @@ struct field_info {
 	uint8_t turn_player{ 0 };
 	uint8_t priorities[2]{ 0,0 };
 	bool can_shuffle{ true };
+};
+// Domain: a Deck Master evaluated by a card query while it is in the Deck Master Zone
+struct dm_probe {
+	card* pcard;
+	bool hit;
+};
+// Domain: counts an evaluation scope (cost effects, Pendulum Summon procedures)
+class dm_scope {
+public:
+	explicit dm_scope(uint32_t& counter_) : counter(counter_) { ++counter; }
+	~dm_scope() { --counter; }
+	dm_scope(const dm_scope&) = delete;
+	dm_scope& operator=(const dm_scope&) = delete;
+private:
+	uint32_t& counter;
+};
+// Domain: a probe frame, popped on every exit path (filters nest and Lua errors unwind)
+class dm_probe_frame {
+public:
+	dm_probe_frame(std::vector<dm_probe>& probes_, card* pcard) : probes(probes_), index(probes_.size()) {
+		probes.push_back({ pcard, false });
+	}
+	~dm_probe_frame() { probes.resize(index); }
+	dm_probe_frame(const dm_probe_frame&) = delete;
+	dm_probe_frame& operator=(const dm_probe_frame&) = delete;
+	bool hit() const { return probes.size() > index && probes[index].hit; }
+private:
+	std::vector<dm_probe>& probes;
+	size_t index;
 };
 struct lpcost {
 	int32_t count{ 0 };
@@ -374,6 +408,10 @@ struct processor {
 	action_counter_t chain_counter;
 	processor_list recover_damage_reserve;
 	effect_vector dec_count_reserve;
+	// Domain
+	std::vector<dm_probe> dm_probes;
+	uint32_t dm_cost_check{ 0 };
+	uint32_t dm_pendulum_proc{ 0 };
 	action_counter_t& get_counter_map(ActivityType counter_type) {
 		switch(counter_type) {
 			case ACTIVITY_SUMMON:
@@ -454,6 +492,12 @@ public:
 	void next_player(uint8_t playerid);
 
 	bool is_flag(uint64_t flag) const;
+	card* dmz_card(uint8_t playerid) const;
+	bool dmz_is_cost_code(const effect* peffect) const;
+	void dmz_mark_probe(card* pcard, bool result);
+	void dmz_leave(card* pcard, bool pay_cost);
+	void dmz_enter(card* pcard);
+	void dmz_hint(card* pcard, uint8_t hint);
 	bool has_separate_pzone(uint8_t p) const;
 	uint32_t get_pzone_zones_flag() const;
 	uint8_t get_pzone_index(uint8_t seq, uint8_t p) const;
@@ -604,6 +648,7 @@ public:
 	bool process(Processors::Adjust& arg);
 	bool process(Processors::Startup& arg);
 	bool process(Processors::RefreshRelay& arg);
+	bool process(Processors::DomainReturn& arg);
 
 	//operations
 	int32_t negate_chain(uint8_t chaincount);

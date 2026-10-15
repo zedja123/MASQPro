@@ -487,6 +487,8 @@ LUA_FUNCTION(GetBattlePosition) {
 LUA_FUNCTION(GetLocation) {
 	if(self->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED | STATUS_SPSUMMON_STEP))
 		lua_pushinteger(L, 0);
+	else if(self->in_dmz && !pduel->game_field->core.dm_cost_check)
+		lua_pushinteger(L, self->dmz_virtual_location());
 	else
 		lua_pushinteger(L, self->current.location);
 	return 1;
@@ -1371,7 +1373,9 @@ LUA_FUNCTION(IsSummonableCard) {
 }
 LUA_FUNCTION(IsSpecialSummonable) {
 	auto sumtype = lua_get<uint32_t, 0>(L, 2);
-	lua_pushboolean(L, self->is_special_summonable(pduel->game_field->core.reason_player, sumtype));
+	const auto res = self->is_special_summonable(pduel->game_field->core.reason_player, sumtype);
+	pduel->game_field->dmz_mark_probe(self, res);
+	lua_pushboolean(L, res);
 	return 1;
 }
 LUA_FUNCTION(IsFusionSummonableCard) {
@@ -1402,7 +1406,9 @@ inline int32_t spsummonable_rule(lua_State* L, uint32_t cardtype, uint32_t sumty
 	core.only_use_mats = materials;
 	core.forced_summon_minc = minc;
 	core.forced_summon_maxc = maxc;
-	lua_pushboolean(L, pcard->is_special_summonable(p, sumtype));
+	const auto res = pcard->is_special_summonable(p, sumtype);
+	pduel->game_field->dmz_mark_probe(pcard, res);
+	lua_pushboolean(L, res);
 	core.must_use_mats = nullptr;
 	core.only_use_mats = nullptr;
 	core.forced_summon_minc = 0;
@@ -1432,7 +1438,9 @@ LUA_FUNCTION(IsSummonable) {
 		peffect = lua_get<effect*, true>(L, 3);
 	auto minc = lua_get<uint16_t, 0>(L, 4);
 	auto zone = lua_get<uint16_t, 0x1f>(L, 5);
-	lua_pushboolean(L, self->is_can_be_summoned(pduel->game_field->core.reason_player, ign, peffect, minc, zone));
+	const auto res = self->is_can_be_summoned(pduel->game_field->core.reason_player, ign, peffect, minc, zone);
+	pduel->game_field->dmz_mark_probe(self, res);
+	lua_pushboolean(L, res);
 	return 1;
 }
 LUA_FUNCTION(IsMSetable) {
@@ -1443,7 +1451,9 @@ LUA_FUNCTION(IsMSetable) {
 		peffect = lua_get<effect*, true>(L, 3);
 	auto minc = lua_get<uint16_t, 0>(L, 4);
 	auto zone = lua_get<uint32_t, 0xff>(L, 5);
-	lua_pushboolean(L, self->is_setable_mzone(pduel->game_field->core.reason_player, ign, peffect, minc, zone));
+	const auto res = self->is_setable_mzone(pduel->game_field->core.reason_player, ign, peffect, minc, zone);
+	pduel->game_field->dmz_mark_probe(self, res);
+	lua_pushboolean(L, res);
 	return 1;
 }
 LUA_FUNCTION(IsSSetable) {
@@ -1462,7 +1472,26 @@ LUA_FUNCTION(IsCanBeSpecialSummoned) {
 	auto sumpos = lua_get<uint8_t, POS_FACEUP>(L, 7);
 	auto toplayer = lua_get<uint8_t>(L, 8, sumplayer);
 	auto zone = lua_get<uint32_t, 0xff>(L, 9);
-	lua_pushboolean(L, self->is_can_be_special_summoned(peffect, sumtype, sumpos, sumplayer, toplayer, nocheck, nolimit, zone));
+	const auto res = self->is_can_be_special_summoned(peffect, sumtype, sumpos, sumplayer, toplayer, nocheck, nolimit, zone);
+	if(res && self->in_dmz) {
+		// Domain: only a proper summon lets a Deck Master leave the Deck Master Zone
+		switch((sumtype | SUMMON_TYPE_SPECIAL) & 0xff000000) {
+		case SUMMON_TYPE_PENDULUM:
+			if(self->dmz_virtual_location() != LOCATION_HAND)
+				break;
+			[[fallthrough]];
+		case SUMMON_TYPE_RITUAL:
+		case SUMMON_TYPE_FUSION:
+		case SUMMON_TYPE_SYNCHRO:
+		case SUMMON_TYPE_XYZ:
+		case SUMMON_TYPE_LINK:
+			pduel->game_field->dmz_mark_probe(self, true);
+			break;
+		default:
+			break;
+		}
+	}
+	lua_pushboolean(L, res);
 	return 1;
 }
 LUA_FUNCTION(IsAbleToHand) {
@@ -1630,6 +1659,9 @@ LUA_FUNCTION(IsLocation) {
 			lua_pushboolean(L, 1);
 		else
 			lua_pushboolean(L, 0);
+	} else if(self->in_dmz && !pduel->game_field->core.dm_cost_check) {
+		// Domain: a Deck Master in the Deck Master Zone is treated as in the hand/Extra Deck
+		lua_pushboolean(L, (self->dmz_virtual_location() & loc) != 0);
 	} else
 		lua_pushboolean(L, (self->current.location & loc) != 0);
 	return 1;

@@ -743,6 +743,12 @@ struct RefreshRelay : public Process<false> {
 	RefreshRelay(uint16_t step_) :
 		Process(step_) {}
 };
+struct DomainReturn : public Process<false> {
+	uint8_t check_index;
+	bool returned;
+	DomainReturn(uint16_t step_) :
+		Process(step_), check_index(0), returned(false) {}
+};
 
 using processors = std::variant<Adjust, Turn, RefreshLoc, Startup,
 	SelectBattleCmd, SelectIdleCmd, SelectEffectYesNo, SelectYesNo,
@@ -760,7 +766,7 @@ using processors = std::variant<Adjust, Turn, RefreshLoc, Startup,
 	PayLPCost, RemoveCounter, AttackDisable, AnnounceRace, AnnounceAttribute,
 	AnnounceCard, AnnounceNumber, TossCoin, TossDice, RockPaperScissors,
 	SelectFusion, DiscardHand, DiscardDeck, SortDeck, RemoveOverlay, XyzOverlay,
-	RefreshRelay>;
+	RefreshRelay, DomainReturn>;
 
 /*
 * Hack to make the code compile with gcc in debug mode by having

@@ -10,10 +10,13 @@ struct Deck {
 	Vector main;
 	Vector extra;
 	Vector side;
+	// Domain format: the Deck Master, kept apart from the other piles.
+	const CardDataC* master{ nullptr };
 	void clear() {
 		main.clear();
 		extra.clear();
 		side.clear();
+		master = nullptr;
 	}
 };
 enum class RITUAL_LOCATION : uint8_t {

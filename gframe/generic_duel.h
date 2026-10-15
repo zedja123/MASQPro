@@ -61,9 +61,10 @@ protected:
 		Deck odeck{};
 		Deck pdeck{};
 		uint32_t deck_error;
+		uint32_t master_code{ 0 };
 		duelist() : player(0), ready(false), deck_error(0) {}
 		duelist(DuelPlayer* _player) : player(_player), ready(false), deck_error(0) {}
-		void Clear() { player = nullptr; ready = false; pdeck.clear(); odeck.clear(); deck_error = 0; }
+		void Clear() { player = nullptr; ready = false; pdeck.clear(); odeck.clear(); deck_error = 0; master_code = 0; }
 		operator bool() const {
 			return !!player;
 		}
@@ -86,6 +87,8 @@ protected:
 	void Catchup(DuelPlayer* dp);
 	uint8_t GetPos(DuelPlayer* dp);
 	void OrderPlayers(std::vector<duelist>& players, size_t offset = 0);
+	bool IsDomain() const;
+	void AddDeckMaster(const duelist& dueler, OCG_NewCardInfo card_info);
 	template<typename T, typename T2>
 	inline void Iter(T& list, const T2& func) {
 		for(auto& dlr : list) {

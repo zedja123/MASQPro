@@ -99,6 +99,24 @@ bool card::is_extra_deck_monster() const {
 		return false;
 	return true;
 }
+// Domain: where a Deck Master in the Deck Master Zone is treated as being
+// for the methods that let it leave the zone
+uint8_t card::dmz_virtual_location() const {
+	return is_extra_deck_monster() ? LOCATION_EXTRA : LOCATION_HAND;
+}
+bool card::is_deck_master() const {
+	return owner < 2 && pduel->game_field->player[owner].deck_master == this;
+}
+uint32_t card::dmz_cost() const {
+	if(owner > 1)
+		return 0;
+	return 500 * pduel->game_field->player[owner].dm_returns;
+}
+bool card::is_dmz_cost_payable() const {
+	if(!in_dmz)
+		return true;
+	return static_cast<int64_t>(pduel->game_field->player[owner].lp) >= static_cast<int64_t>(dmz_cost());
+}
 template<typename T>
 void insert_value(std::vector<uint8_t>& vec, const T& _val) {
 	T val = _val;
@@ -1630,7 +1648,7 @@ void card::apply_field_effect() {
 		return;
 	for (auto& it : field_effect) {
 		if (it.second->in_range(this)
-				|| ((it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
+				|| (!in_dmz && (it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
 			pduel->game_field->add_effect(it.second);
 		}
 	}
@@ -1644,7 +1662,7 @@ void card::cancel_field_effect() {
 		return;
 	for (auto& it : field_effect) {
 		if (it.second->in_range(this)
-				|| ((it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
+				|| (!in_dmz && (it.second->range & LOCATION_HAND) && (it.second->type & EFFECT_TYPE_TRIGGER_O) && !(it.second->code & EVENT_PHASE))) {
 			pduel->game_field->remove_effect(it.second);
 		}
 	}
@@ -1655,7 +1673,7 @@ void card::cancel_field_effect() {
 // false: before moving, summoning, chaining
 // true: ready
 void card::enable_field_effect(bool enabled) {
-	if (current.location == 0)
+	if (current.location == 0 && !in_dmz)
 		return;
 	if ((enabled && get_status(STATUS_EFFECT_ENABLED)) || (!enabled && !get_status(STATUS_EFFECT_ENABLED)))
 		return;
@@ -1775,7 +1793,7 @@ int32_t card::add_effect(effect* peffect) {
 	peffect->handler = this;
 	if((peffect->type & EFFECT_TYPE_FIELD)) {
 		if(peffect->in_range(this)
-			|| (current.controler != PLAYER_NONE && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
+			|| (current.controler != PLAYER_NONE && !in_dmz && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
 			pduel->game_field->add_effect(peffect);
 	}
 	if (current.controler != PLAYER_NONE && !check_target.empty()) {
@@ -1845,7 +1863,7 @@ void card::remove_effect(effect* peffect, effect_container::iterator it) {
 		}
 		field_effect.erase(it);
 		if(peffect->in_range(this)
-			|| (current.controler != PLAYER_NONE && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
+			|| (current.controler != PLAYER_NONE && !in_dmz && ((peffect->range & LOCATION_HAND) && (peffect->type & EFFECT_TYPE_TRIGGER_O) && !(peffect->code & EVENT_PHASE))))
 			pduel->game_field->remove_effect(peffect);
 	}
 	if ((current.controler != PLAYER_NONE) && !check_target.empty()) {
@@ -2737,6 +2755,8 @@ int32_t card::check_set_procedure(effect* peffect, uint8_t playerid, uint8_t ign
 	return FALSE;
 }
 void card::filter_spsummon_procedure(uint8_t playerid, effect_set* peset, uint32_t summon_type) {
+	if(!is_dmz_cost_payable())
+		return;
 	auto pr = field_effect.equal_range(EFFECT_SPSUMMON_PROC);
 	uint8_t toplayer;
 	uint8_t topos;
@@ -2788,6 +2808,7 @@ void card::filter_spsummon_procedure_g(uint8_t playerid, effect_set* peset) {
 		pduel->game_field->core.reason_effect = peffect;
 		pduel->game_field->core.reason_player = this->current.controler;
 		pduel->game_field->save_lp_cost();
+		dm_scope pendulum_scope(pduel->game_field->core.dm_pendulum_proc);
 		pduel->lua->add_param<LuaParam::EFFECT>(peffect);
 		pduel->lua->add_param<LuaParam::CARD>(this);
 		if(pduel->lua->check_condition(peffect->condition, 2))
@@ -3062,6 +3083,7 @@ void card::get_unique_target(card_set* cset, uint8_t controler, card* icard) {
 	}
 }
 int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid) {
+	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
 	effect_set eset;
 	pduel->game_field->filter_player_effect(playerid, ecode, &eset, false);
 	filter_effect(ecode, &eset);
@@ -3075,6 +3097,7 @@ int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid) {
 	return TRUE;
 }
 int32_t card::check_cost_condition(uint32_t ecode, uint8_t playerid, uint32_t sumtype) {
+	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
 	effect_set eset;
 	pduel->game_field->filter_player_effect(playerid, ecode, &eset, false);
 	filter_effect(ecode, &eset);
@@ -3167,6 +3190,8 @@ int32_t card::is_summonable(effect* peffect, uint8_t min_tribute, uint32_t zone,
 int32_t card::is_can_be_summoned(uint8_t playerid, uint8_t ignore_count, effect* peffect, uint8_t min_tribute, uint32_t zone) {
 	if(!is_summonable_card())
 		return FALSE;
+	if(in_dmz && (effective_location() != LOCATION_HAND || !is_dmz_cost_payable()))
+		return FALSE;
 	{
 		auto reason_effect = pduel->game_field->core.reason_effect;
 		if(reason_effect && reason_effect->get_handler() == this)
@@ -3191,7 +3216,7 @@ int32_t card::is_can_be_summoned(uint8_t playerid, uint8_t ignore_count, effect*
 			pduel->game_field->restore_lp_cost();
 			return FALSE;
 		}
-	} else if(current.location == LOCATION_HAND) {
+	} else if(effective_location() == LOCATION_HAND) {
 		if(is_affected_by_effect(EFFECT_CANNOT_SUMMON)) {
 			pduel->game_field->restore_lp_cost();
 			return FALSE;
@@ -3299,6 +3324,8 @@ int32_t card::is_can_be_flip_summoned(uint8_t playerid) {
 int32_t card::is_special_summonable(uint8_t playerid, uint32_t summon_type) {
 	if(!(data.type & TYPE_MONSTER))
 		return FALSE;
+	if(!is_dmz_cost_payable())
+		return FALSE;
 	if(is_affected_by_effect(EFFECT_CANNOT_SPECIAL_SUMMON))
 		return FALSE;
 	if(is_status(STATUS_FORBIDDEN))
@@ -3316,20 +3343,23 @@ int32_t card::is_special_summonable(uint8_t playerid, uint32_t summon_type) {
 int32_t card::is_can_be_special_summoned(effect* reason_effect, uint32_t sumtype, uint8_t sumpos, uint8_t sumplayer, uint8_t toplayer, uint8_t nocheck, uint8_t nolimit, uint32_t zone) {
 	if(reason_effect->get_handler() == this)
 		reason_effect->status |= EFFECT_STATUS_SUMMON_SELF;
-	if(current.location == LOCATION_MZONE)
+	const auto location = effective_location();
+	if(location == LOCATION_MZONE)
 		return FALSE;
-	if(current.location == LOCATION_REMOVED && (current.position & POS_FACEDOWN))
+	if(location == LOCATION_REMOVED && (current.position & POS_FACEDOWN))
+		return FALSE;
+	if(!is_dmz_cost_payable())
 		return FALSE;
 	if(!nolimit && is_affected_by_effect(EFFECT_REVIVE_LIMIT) && !is_status(STATUS_PROC_COMPLETE)) {
-		if((current.location & (LOCATION_GRAVE | LOCATION_REMOVED | LOCATION_SZONE))
-			|| (!nocheck && (current.location & (LOCATION_DECK | LOCATION_HAND))))
+		if((location & (LOCATION_GRAVE | LOCATION_REMOVED | LOCATION_SZONE))
+			|| (!nocheck && (location & (LOCATION_DECK | LOCATION_HAND))))
 			return FALSE;
-		if((data.type & TYPE_PENDULUM) && current.location == LOCATION_EXTRA && (current.position & POS_FACEUP))
+		if((data.type & TYPE_PENDULUM) && location == LOCATION_EXTRA && (current.position & POS_FACEUP))
 			return FALSE;
-		if(current.location == LOCATION_OVERLAY)
+		if(location == LOCATION_OVERLAY)
 			return FALSE;
 	}
-	if((data.type & TYPE_PENDULUM) && current.location == LOCATION_EXTRA && (current.position & POS_FACEUP)
+	if((data.type & TYPE_PENDULUM) && location == LOCATION_EXTRA && (current.position & POS_FACEUP)
 		&& (sumtype == SUMMON_TYPE_FUSION || sumtype == SUMMON_TYPE_SYNCHRO || sumtype == SUMMON_TYPE_XYZ))
 		return FALSE;
 	if((sumpos & POS_FACEDOWN) && pduel->game_field->is_player_affected_by_effect(sumplayer, EFFECT_DEVINE_LIGHT))
@@ -3385,7 +3415,7 @@ int32_t card::is_setable_mzone(uint8_t playerid, uint8_t ignore_count, effect* p
 		if(reason_effect && reason_effect->get_handler() == this)
 			reason_effect->status |= EFFECT_STATUS_SUMMON_SELF;
 	}
-	if(current.location != LOCATION_HAND)
+	if(effective_location() != LOCATION_HAND || !is_dmz_cost_payable())
 		return FALSE;
 	if(is_status(STATUS_FORBIDDEN))
 		return FALSE;

@@ -21,6 +21,9 @@ namespace ygo {
 #define REPLAY_DIRECT_SEED	0x80
 #define REPLAY_64BIT_DUELFLAG	0x100
 #define REPLAY_EXTENDED_HEADER	0x200
+// Domain format: every duelist's deck block in the YRP1 replay is followed by
+// [u32 n][n x u32 Deck Master code] (n is 0 or 1).
+#define REPLAY_DOMAIN		0x400
 
 #define REPLAY_YRP1			0x31707279
 #define REPLAY_YRPX			0x58707279
@@ -63,6 +66,7 @@ using cardlist_type = std::vector<uint32_t>;
 
 struct ReplayDeck {
 	cardlist_type main_deck, extra_deck;
+	uint32_t master{ 0 }; // Domain: Deck Master code, 0 if none
 };
 
 using ReplayDeckList = std::vector<ReplayDeck>;

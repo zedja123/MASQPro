@@ -58,6 +58,28 @@ namespace ygo {
 
 std::string showing_repo = "";
 
+// Domain: tooltip lines of the card in the Deck Master Zone. The core reports
+// nothing about it there, so the stats come from the card data.
+static void AppendDeckMasterInfo(std::wstring& str, const ClientCard* pcard) {
+	str.append(L"\n").append(gDataManager->HasSysString(7110) ? gDataManager->GetSysString(7110) : L"Deck Master"sv);
+	if(const auto* cd = gDataManager->GetCardData(pcard->code); cd && (cd->type & TYPE_MONSTER)) {
+		auto Stat = [](int32_t value) { return value < 0 ? std::wstring(L"?") : epro::to_wstring(value); };
+		if(cd->type & TYPE_LINK) {
+			str.append(epro::format(L"\n{}/Link {}\n{}/{}", Stat(cd->attack), cd->level, gDataManager->FormatRace(cd->race),
+									gDataManager->FormatAttribute(cd->attribute)));
+		} else {
+			str.append(epro::format(L"\n{}/{}", Stat(cd->attack), Stat(cd->defense)));
+			str.append(epro::format(L"\n{}{} {}/{}", (cd->type & TYPE_XYZ) ? L"\u2606" : L"\u2605", cd->level, gDataManager->FormatRace(cd->race),
+									gDataManager->FormatAttribute(cd->attribute)));
+		}
+		if(cd->type & TYPE_PENDULUM)
+			str.append(epro::format(L"\n{}/{}", cd->lscale, cd->rscale));
+	}
+	const auto cost_fmt = gDataManager->HasSysString(7113) ? gDataManager->GetSysString(7113)
+		: L"Summoning it from the Deck Master Zone costs %d LP."sv;
+	str.append(L"\n").append(epro::sprintf(cost_fmt, 500 * mainGame->dField.dmz_returns[pcard->controler]));
+}
+
 bool ClientField::OnEvent(const irr::SEvent& event) {
 	bool stopPropagation = false;
 	if(OnCommonEvent(event, stopPropagation))
@@ -565,6 +587,15 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 				case LOCATION_SZONE: {
 					ClientCard* pcard = szone[command_controler][command_sequence];
 					for (auto& _pcard : pcard->overlayed)
+						selectable_cards.push_back(_pcard);
+					mainGame->wCardSelect->setText(epro::format(L"{}({})", gDataManager->GetSysString(1007), pcard->overlayed.size()).data());
+					break;
+				}
+				case LOCATION_DMZ: {
+					ClientCard* pcard = dmz[command_controler];
+					if(!pcard)
+						break;
+					for(auto& _pcard : pcard->overlayed)
 						selectable_cards.push_back(_pcard);
 					mainGame->wCardSelect->setText(epro::format(L"{}({})", gDataManager->GetSysString(1007), pcard->overlayed.size()).data());
 					break;
@@ -1140,6 +1171,8 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 			GetHoverField(mousepos);
 			if(hovered_location & 0xe)
 				clicked_card = GetCard(hovered_controler, hovered_location, hovered_sequence);
+			else if(hovered_location == LOCATION_DMZ)
+				clicked_card = dmz[hovered_controler];
 			else clicked_card = 0;
 			if(mainGame->dInfo.isReplay) {
 				if(mainGame->wCardSelect->isVisible())
@@ -1240,7 +1273,8 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 			case MSG_WAITING: {
 				switch(hovered_location) {
 				case LOCATION_MZONE:
-				case LOCATION_SZONE: {
+				case LOCATION_SZONE:
+				case LOCATION_DMZ: {
 					if(!clicked_card || clicked_card->overlayed.size() == 0)
 						break;
 					ShowMenu(COMMAND_LIST, x, y);
@@ -1285,7 +1319,8 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 				}
 				case LOCATION_HAND:
 				case LOCATION_MZONE:
-				case LOCATION_SZONE: {
+				case LOCATION_SZONE:
+				case LOCATION_DMZ: {
 					if(!clicked_card)
 						break;
 					int command_flag = clicked_card->cmdFlag;
@@ -1549,6 +1584,8 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 						mcard = deck[hovered_controler].back();
 				} else if(hovered_location == LOCATION_SKILL) {
 					mcard = skills[hovered_controler];
+				} else if(hovered_location == LOCATION_DMZ) {
+					mcard = dmz[hovered_controler];
 				} else {
 					const auto& self = mainGame->dInfo.isTeam1 ? mainGame->dInfo.selfnames : mainGame->dInfo.opponames;
 					const auto& oppo = mainGame->dInfo.isTeam1 ? mainGame->dInfo.opponames : mainGame->dInfo.selfnames;
@@ -1591,12 +1628,14 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
 					SetShowMark(mcard, true);
 					if(mcard->code) {
 						mainGame->ShowCardInfo(mcard->code);
-						if(mcard->location & (LOCATION_HAND | LOCATION_MZONE | LOCATION_SZONE | LOCATION_SKILL)) {
+						if(mcard->location & (LOCATION_HAND | LOCATION_MZONE | LOCATION_SZONE | LOCATION_SKILL | LOCATION_DMZ)) {
 							std::wstring str(gDataManager->GetName(mcard->code));
 							if(mcard->alias != 0 && !CardDataC::IsInArtworkOffsetRange(mcard) && str != gDataManager->GetName(mcard->alias)) {
 								str.append(epro::format(L"\n({})", gDataManager->GetName(mcard->alias)));
 							}
-							if(mcard->type & TYPE_MONSTER) {
+							if(mcard->location == LOCATION_DMZ) {
+								AppendDeckMasterInfo(str, mcard);
+							} else if(mcard->type & TYPE_MONSTER) {
 								if (mcard->type & TYPE_LINK) {
 									str.append(epro::format(L"\n{}/Link {}\n{}/{}", mcard->atkstring, mcard->link, gDataManager->FormatRace(mcard->race),
 										gDataManager->FormatAttribute(mcard->attribute)));
@@ -2613,6 +2652,11 @@ void ClientField::GetHoverField(const irr::core::vector2d<irr::s32>& mouse) {
 						hovered_location = LOCATION_MZONE;
 						hovered_sequence = 5;
 					}
+				} else if((sequence == 0 || sequence == 4) && HasDeckMasterZone()) {
+					// Domain: the Deck Master Zones at both ends of the row
+					hovered_controler = (sequence == 0) ? 0 : 1;
+					hovered_location = LOCATION_DMZ;
+					hovered_sequence = 0;
 				}
 			} else if(boardy >= matManager.vFieldMzone[1][0][2].Pos.Y && boardy <= matManager.vFieldMzone[1][0][0].Pos.Y) {
 				hovered_controler = 1;
@@ -2624,6 +2668,11 @@ void ClientField::GetHoverField(const irr::core::vector2d<irr::s32>& mouse) {
 				hovered_sequence = 4 - sequence;
 			}
 		}
+	}
+	// Domain: the 3 columns field shows the Deck Master Zone in the skill zone
+	if(three_columns && hovered_location == LOCATION_SKILL && !skills[hovered_controler] && dmz[hovered_controler]) {
+		hovered_location = LOCATION_DMZ;
+		hovered_sequence = 0;
 	}
 }
 void ClientField::ShowMenu(int flag, int x, int y) {

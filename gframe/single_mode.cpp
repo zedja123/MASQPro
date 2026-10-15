@@ -111,11 +111,15 @@ restart:
 		replay_header.base.flag |= REPLAY_SINGLE_MODE;
 		if(hand_test)
 			replay_header.base.flag |= REPLAY_HAND_TEST;
+		// Domain: the decks in the YRP1 replay carry the Deck Masters.
+		if(hand_test && (opt & DUEL_DOMAIN))
+			replay_header.base.flag |= REPLAY_DOMAIN;
 		last_replay.BeginRecord(true, Replay::GetReplayFilePath(EPRO_TEXT("_LastReplay.yrp")));
 		last_replay.WriteHeader(replay_header);
 		//records the replay with the new system
 		new_replay.BeginRecord();
 		replay_header.base.id = REPLAY_YRPX;
+		replay_header.base.flag &= ~REPLAY_DOMAIN;
 		new_replay.WriteHeader(replay_header);
 		replay_stream.clear();
 	}
@@ -141,11 +145,25 @@ restart:
 				OCG_DuelNewCard(pduel, &card_info);
 				last_replay.Write<uint32_t>(playerdeck.extra[i]->code, false);
 			}
+			// Domain: the Deck Master right after the Extra Deck.
+			if(opt & DUEL_DOMAIN) {
+				const auto* master = playerdeck.master;
+				last_replay.Write<uint32_t>(master ? 1 : 0, false);
+				if(master) {
+					card_info.code = master->code;
+					card_info.loc = LOCATION_DECK_MASTER;
+					card_info.pos = POS_FACEDOWN;
+					OCG_DuelNewCard(pduel, &card_info);
+					last_replay.Write<uint32_t>(master->code, false);
+				}
+			}
 		};
 		LoadDeck(0);
 		if (duelOptions.handTestNoOpponent) {
 			last_replay.Write<uint32_t>(0, false);
 			last_replay.Write<uint32_t>(0, false);
+			if(opt & DUEL_DOMAIN)
+				last_replay.Write<uint32_t>(0, false);
 		} else {
 			LoadDeck(1);
 		}
@@ -380,7 +398,9 @@ bool SingleMode::SinglePlayAnalyze(CoreUtils::Packet& packet) {
 			case 200:
 			case 201:
 			case 202:
-			case 203: {
+			case 203:
+			case HINT_DMZ:
+			case HINT_DMZ_REMOVE: {
 				analyze = true;
 				break;
 

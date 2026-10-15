@@ -9,6 +9,7 @@
 #include "fmt.h"
 #include "data_manager.h"
 #include "deck.h"
+#include "domain_list.h"
 
 namespace ygo {
 
@@ -25,6 +26,10 @@ struct LFList {
 	bool genesys{ false };
 	uint32_t genesys_cap{ 0 };
 	std::unordered_map<uint32_t, uint32_t> points;
+	// Domain format: a "$domain" line, followed by "#@" data lines with the
+	// domain of each Deck Master and the forbidden Deck Masters.
+	bool domain{ false };
+	DomainList domain_data;
 	auto GetLimitationIterator(const CardDataC* pcard) const {
 		auto flit = content.find(pcard->code);
 		if(flit == content.end() && pcard->alias) {
@@ -90,15 +95,22 @@ public:
 	static void RefreshDeck(Deck& deck);
 	static DeckError CheckDeckContent(const Deck& deck, LFList const* lflist, DuelAllowedCards allowedCards, uint32_t forbiddentypes, bool rituals_in_extra);
 	static DeckError CheckDeckSize(const Deck& deck, const DeckSizes& sizes);
+	// Domain: Deck Master present and valid (DOMAIN_DECK_MASTER, checked even
+	// without content checks) and not forbidden (DOMAIN_FORBIDDEN_DM).
+	static DeckError CheckDeckMaster(const Deck& deck, const LFList& lflist, bool check_content);
+	static DomainEntry GetDomain(const LFList& lflist, const CardDataC* dm);
+	static bool IsInDomain(const CardDataC* card, const DomainEntry& domain);
+	// Deck Master code from the CTOS_UPDATE_DECK trailer, 0 if there is none.
+	static uint32_t ReadDeckMasterTrailer(const uint8_t* trailer, size_t len);
 	static uint32_t GetGenesysPoints(const Deck& deck, const LFList& lflist);
 	static int TypeCount(const Deck::Vector& cards, uint32_t type);
 	static int CountLegends(const Deck::Vector& cards, uint32_t type);
-	static uint32_t LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
-	static uint32_t LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist = nullptr, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
-	static bool LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra);
+	static uint32_t LoadDeckFromBuffer(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT, uint32_t master = 0);
+	static uint32_t LoadDeck(Deck& deck, const cardlist_type& mainlist, const cardlist_type& sidelist, const cardlist_type* extralist = nullptr, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT, uint32_t master = 0);
+	static bool LoadSide(Deck& deck, uint32_t* dbuf, uint32_t mainc, uint32_t sidec, bool rituals_in_extra, uint32_t master = 0, bool domain = false);
 	static bool LoadDeckFromFile(epro::path_stringview file, Deck& out, bool separated = false, RITUAL_LOCATION rituals_in_extra = RITUAL_LOCATION::DEFAULT);
 	static bool SaveDeck(epro::path_stringview name, const Deck& deck);
-	static bool SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist);
+	static bool SaveDeck(epro::path_stringview name, const cardlist_type& mainlist, const cardlist_type& extralist, const cardlist_type& sidelist, uint32_t master = 0);
 	static std::string MakeYdkEntryString(uint32_t code);
 	static std::wstring ExportDeckYdke(const Deck& deck);
 	static std::wstring ExportDeckCardNames(Deck deck);

@@ -39,11 +39,14 @@ ClientField::ClientField() {
 	remove_act[0] = remove_act[1] = false;
 	extra_act[0] = extra_act[1] = false;
 	pzone_act[0] = pzone_act[1] = false;
+	dmz_act[0] = dmz_act[1] = false;
 	conti_act = false;
 	deck_reversed = false;
 	conti_selecting = false;
 	for(int p = 0; p < 2; ++p) {
 		skills[p] = nullptr;
+		dmz[p] = nullptr;
+		dmz_returns[p] = 0;
 		mzone[p].resize(7, nullptr);
 		szone[p].resize(8, nullptr);
 	}
@@ -76,6 +79,11 @@ void ClientField::Clear() {
 		delete skills[1];
 		skills[1] = nullptr;
 	}
+	for(int p = 0; p < 2; ++p) {
+		delete dmz[p];
+		dmz[p] = nullptr;
+		dmz_returns[p] = 0;
+	}
 	overlay_cards.clear();
 	extra_p_count[0] = 0;
 	extra_p_count[1] = 0;
@@ -106,6 +114,7 @@ void ClientField::Clear() {
 	remove_act[0] = remove_act[1] = false;
 	extra_act[0] = extra_act[1] = false;
 	pzone_act[0] = pzone_act[1] = false;
+	dmz_act[0] = dmz_act[1] = false;
 	conti_act = false;
 	conti_selecting = false;
 	deck_reversed = false;
@@ -161,6 +170,16 @@ std::vector<ClientCard*>* ClientField::GetList(uint8_t location, uint8_t control
 }
 ClientCard* ClientField::GetCard(uint8_t controler, uint8_t location, size_t sequence, size_t sub_seq) {
 	bool is_xyz = (location & LOCATION_OVERLAY) != 0;
+	// Domain: (controler, 0, DMZ_SEQUENCE) is the Deck Master Zone, and
+	// (controler, LOCATION_OVERLAY, DMZ_SEQUENCE) the materials attached there
+	if((location & (~LOCATION_OVERLAY)) == 0 && sequence == DMZ_SEQUENCE && controler < 2) {
+		ClientCard* scard = dmz[controler];
+		if(!is_xyz || !scard)
+			return scard;
+		if(scard->overlayed.size() > sub_seq)
+			return scard->overlayed[sub_seq];
+		return 0;
+	}
 	auto lst = GetList(location & (~LOCATION_OVERLAY), controler);
 	if(!lst)
 		return 0;
@@ -247,6 +266,82 @@ void ClientField::AddCard(ClientCard* pcard, uint8_t controler, uint8_t location
 	}
 	}
 }
+// Domain: places a card in the Deck Master Zone, shown face-up, dropping
+// whatever only made sense where it was
+void ClientField::PutInDeckMasterZone(ClientCard* pcard, uint8_t controler) {
+	if(dmz[controler] && dmz[controler] != pcard) {
+		ForgetCard(dmz[controler]);
+		delete dmz[controler];
+	}
+	dmz[controler] = pcard;
+	pcard->controler = controler;
+	pcard->location = LOCATION_DMZ;
+	pcard->sequence = 0;
+	pcard->position = POS_FACEUP_ATTACK;
+	pcard->is_reversed = false;
+	pcard->cHint = 0;
+	pcard->chValue = 0;
+	pcard->counters.clear();
+	pcard->desc_hints.clear();
+}
+ClientCard* ClientField::TakeFromDeckMasterZone(uint8_t controler) {
+	auto pcard = std::exchange(dmz[controler], nullptr);
+	if(pcard)
+		pcard->location = 0;
+	return pcard;
+}
+bool ClientField::HasDeckMasterZone() const {
+	return (mainGame->dInfo.duel_params & DUEL_DOMAIN) || dmz[0] || dmz[1];
+}
+// Drops the references to a card that is about to be deleted outside of the
+// field lists, and deletes its materials
+void ClientField::ForgetCard(ClientCard* pcard) {
+	for(auto& ocard : pcard->overlayed) {
+		overlay_cards.erase(ocard);
+		ForgetCard(ocard);
+		delete ocard;
+	}
+	pcard->overlayed.clear();
+	auto Forget = [pcard](std::vector<ClientCard*>& list) {
+		list.erase(std::remove(list.begin(), list.end(), pcard), list.end());
+	};
+	Forget(summonable_cards);
+	Forget(spsummonable_cards);
+	Forget(msetable_cards);
+	Forget(ssetable_cards);
+	Forget(reposable_cards);
+	Forget(attackable_cards);
+	Forget(conti_cards);
+	Forget(selectable_cards);
+	Forget(selected_cards);
+	Forget(must_select_cards);
+	Forget(display_cards);
+	Forget(selectsum_all);
+	Forget(queued_panel_confirm_cards);
+	for(size_t i = activatable_cards.size(); i-- > 0;) {
+		if(activatable_cards[i] != pcard)
+			continue;
+		activatable_cards.erase(activatable_cards.begin() + i);
+		if(i < activatable_descs.size())
+			activatable_descs.erase(activatable_descs.begin() + i);
+	}
+	selectsum_cards.erase(pcard);
+	for(auto& chit : chains)
+		chit.target.erase(pcard);
+	current_chain.target.erase(pcard);
+	if(hovered_card == pcard)
+		hovered_card = nullptr;
+	if(clicked_card == pcard)
+		clicked_card = nullptr;
+	if(command_card == pcard)
+		command_card = nullptr;
+	if(highlighting_card == pcard)
+		highlighting_card = nullptr;
+	if(attacker == pcard)
+		attacker = nullptr;
+	if(attack_target == pcard)
+		attack_target = nullptr;
+}
 ClientCard* ClientField::RemoveCard(uint8_t controler, uint8_t location, uint32_t sequence) {
 	auto RemoveFromPile = [&](auto& pile) {
 		float z_decrease = gGameConfig->topdown_view ? 0.0f : 0.01f;
@@ -307,6 +402,9 @@ void ClientField::UpdateCard(uint8_t controler, uint8_t location, uint32_t seque
 		if(mainGame->dInfo.compat_mode)
 			len = BufferIO::Read<uint32_t>(data);
 		pcard->UpdateInfo(CoreUtils::Query{ data, mainGame->dInfo.compat_mode, len, mainGame->dInfo.legacy_race_size });
+		// Domain: face-down for the core, shown face-up in the Deck Master Zone
+		if(pcard->location == LOCATION_DMZ)
+			pcard->position = POS_FACEUP_ATTACK;
 	}
 }
 void ClientField::UpdateFieldCard(uint8_t controler, uint8_t location, const uint8_t* data, uint32_t len) {
@@ -336,6 +434,7 @@ void ClientField::ClearCommandFlag() {
 	remove_act[0] = remove_act[1] = false;
 	extra_act[0] = extra_act[1] = false;
 	pzone_act[0] = pzone_act[1] = false;
+	dmz_act[0] = dmz_act[1] = false;
 	conti_act = false;
 }
 void ClientField::ClearSelect() {
@@ -357,6 +456,7 @@ void ClientField::ClearChainSelect() {
 	remove_act[0] = remove_act[1] = false;
 	extra_act[0] = extra_act[1] = false;
 	pzone_act[0] = pzone_act[1] = false;
+	dmz_act[0] = dmz_act[1] = false;
 	conti_act = false;
 }
 // needs to be synchronized with EGET_SCROLL_BAR_CHANGED
@@ -646,6 +746,8 @@ void ClientField::ReplaySwap() {
 	std::swap(extra[0], extra[1]);
 	std::swap(extra_p_count[0], extra_p_count[1]);
 	std::swap(skills[0], skills[1]);
+	std::swap(dmz[0], dmz[1]);
+	std::swap(dmz_returns[0], dmz_returns[1]);
 	for(int p = 0; p < 2; ++p) {
 		resetloc(deck[p]);
 		resetloc(hand[p]);
@@ -655,6 +757,7 @@ void ClientField::ReplaySwap() {
 		resetloc(remove[p]);
 		resetloc(extra[p]);
 		reset(skills[p]);
+		reset(dmz[p]);
 	}
 	resetloc(overlay_cards);
 	mainGame->dInfo.isFirst = !mainGame->dInfo.isFirst;
@@ -692,6 +795,7 @@ void ClientField::RefreshAllCards() {
 		refreshloc(remove[p]);
 		refreshloc(extra[p]);
 		refresh(skills[p]);
+		refresh(dmz[p]);
 	}
 	refreshloc(overlay_cards);
 	for(auto& chit : chains)
@@ -710,6 +814,14 @@ void ClientField::GetChainDrawCoordinates(uint8_t controler, uint8_t location, u
 		t->Z = multiplier * 0.01f + 0.03f;
 	};
 	const irr::video::S3DVertex* loc = nullptr;
+	// Domain: the Deck Master Zone
+	if(location == 0 && sequence == DMZ_SEQUENCE && controler < 2) {
+		loc = matManager.getDmz()[controler];
+		t->X = (loc[0].Pos.X + loc[1].Pos.X) / 2;
+		t->Y = (loc[0].Pos.Y + loc[2].Pos.Y) / 2;
+		t->Z = 0.03f;
+		return;
+	}
 	switch((location & (~LOCATION_OVERLAY))) {
 	case LOCATION_DECK: {
 		loc = matManager.getDeck()[controler];
@@ -811,6 +923,7 @@ void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df
 		case LOCATION_REMOVED:	return matManager.getRemove()[controler];
 		case LOCATION_EXTRA:	return matManager.getExtra()[controler];
 		case LOCATION_SKILL:	return matManager.getSkill()[controler];
+		case LOCATION_DMZ:		return matManager.getDmz()[controler];
 		case LOCATION_OVERLAY:
 			if(!pcard->overlayTarget || controler > 1)
 				return nullptr;
@@ -818,6 +931,8 @@ void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df
 				return matManager.vFieldMzone[controler][pcard->overlayTarget->sequence];
 			if(pcard->overlayTarget->location == LOCATION_SZONE)
 				return matManager.getSzone()[controler][pcard->overlayTarget->sequence];
+			if(pcard->overlayTarget->location == LOCATION_DMZ)
+				return matManager.getDmz()[controler];
 			[[fallthrough]];
 		default: return nullptr;
 		}

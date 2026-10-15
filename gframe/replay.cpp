@@ -244,6 +244,13 @@ void Replay::ParseDecks() {
 			tmp.main_deck.push_back(Read<uint32_t>());
 		for(uint32_t j = 0, extra = Read<uint32_t>(); j < extra && can_read; ++j)
 			tmp.extra_deck.push_back(Read<uint32_t>());
+		if(pheader.base.flag & REPLAY_DOMAIN) {
+			for(uint32_t j = 0, masters = Read<uint32_t>(); j < masters && can_read; ++j) {
+				const auto code = Read<uint32_t>();
+				if(j == 0)
+					tmp.master = code;
+			}
+		}
 		decks.push_back(std::move(tmp));
 	}
 	replay_custom_rule_cards.clear();

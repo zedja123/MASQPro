@@ -72,6 +72,7 @@ OPTION(bool, addCardNamesToDeckList, false)
 OPTION(bool, filterBot, true)
 OPTION_ALIASED(bool, chkAnime, show_unofficial, false)
 OPTION(bool, genesysPoints, false)
+OPTION(bool, domainMode, false)
 #if EDOPRO_MACOS
 OPTION(bool, ctrlClickIsRMB, true)
 #else
