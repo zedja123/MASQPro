@@ -148,6 +148,10 @@ int32_t effect::is_activateable(uint8_t playerid, const tevent& e, int32_t negle
 	if(!check_count_limit(playerid))
 		return FALSE;
 	if (!is_flag(EFFECT_FLAG_FIELD_ONLY)) {
+		// Domain: from the Deck Master Zone only the Pendulum Scale activation of the Deck Master
+		if(card* phandler = get_handler(); phandler->in_dmz
+			&& (!(type & EFFECT_TYPE_ACTIVATE) || !in_range(phandler) || !phandler->is_dmz_cost_payable()))
+			return FALSE;
 		if (type & EFFECT_TYPE_ACTIVATE) {
 			if((handler->current.controler != playerid) && !(flag[0] & EFFECT_FLAG_BOTH_SIDE))
 				return FALSE;
@@ -314,6 +318,7 @@ int32_t effect::is_action_check(uint8_t playerid) {
 	}
 	eset.clear();
 	pduel->game_field->filter_player_effect(playerid, EFFECT_ACTIVATE_COST, &eset);
+	dm_scope cost_scope(pduel->game_field->core.dm_cost_check);
 	for(const auto& peff : eset) {
 		pduel->lua->add_param<LuaParam::EFFECT>(peff);
 		pduel->lua->add_param<LuaParam::EFFECT>(this);
@@ -435,6 +440,36 @@ int32_t effect::is_target(card* pcard) {
 	if(pcard && !is_flag(EFFECT_FLAG_SET_AVAILABLE) && (pcard->current.location & LOCATION_ONFIELD)
 			&& !pcard->is_position(POS_FACEUP))
 		return FALSE;
+	if(pcard && pcard->in_dmz) {
+		// Domain: a Deck Master in the Deck Master Zone is not affected by other cards, except by
+		// the effects that change how it is Normal Summoned/Set, applied as if it were in the hand
+		switch(code) {
+		case EFFECT_SUMMON_PROC:
+		case EFFECT_SET_PROC:
+		case EFFECT_LIMIT_SUMMON_PROC:
+		case EFFECT_LIMIT_SET_PROC:
+		case EFFECT_DECREASE_TRIBUTE:
+		case EFFECT_DECREASE_TRIBUTE_SET:
+		case EFFECT_EXTRA_SUMMON_COUNT:
+		case EFFECT_EXTRA_SET_COUNT:
+			break;
+		default:
+			return FALSE;
+		}
+		if(!is_flag(EFFECT_FLAG_IGNORE_RANGE)) {
+			if(is_flag(EFFECT_FLAG_SPSUM_PARAM))
+				return FALSE;
+			const auto vloc = pcard->dmz_virtual_location();
+			uint16_t trange;
+			if(is_flag(EFFECT_FLAG_ABSOLUTE_TARGET))
+				trange = (pcard->current.controler == 0) ? s_range : o_range;
+			else
+				trange = (pcard->current.controler == get_handler_player()) ? s_range : o_range;
+			if(!(trange & vloc))
+				return FALSE;
+		}
+		return is_fit_target_function(pcard);
+	}
 	if(!is_flag(EFFECT_FLAG_IGNORE_RANGE)) {
 		if(pcard->get_status(STATUS_SUMMONING | STATUS_SUMMON_DISABLED | STATUS_ACTIVATE_DISABLED | STATUS_SPSUMMON_STEP))
 			return FALSE;
@@ -788,6 +823,19 @@ int32_t effect::in_range(card* pcard) {
 	if((range & (LOCATION_MMZONE | LOCATION_EMZONE))) {
 		real_range &= ~(LOCATION_MMZONE | LOCATION_EMZONE);
 		real_range |= LOCATION_MZONE;
+	}
+	if(pcard->in_dmz) {
+		// Domain: in the Deck Master Zone only its own summon procedures and, for a Main Deck
+		// Pendulum Monster, its Pendulum Scale activation are active, as if it were in the
+		// hand or in the Extra Deck
+		const auto vloc = pcard->dmz_virtual_location();
+		if(!(real_range & vloc))
+			return FALSE;
+		if((type & EFFECT_TYPE_FIELD) && !(type & EFFECT_TYPE_ACTIONS) && code == EFFECT_SPSUMMON_PROC)
+			return TRUE;
+		if((type & EFFECT_TYPE_ACTIVATE) && (pcard->data.type & TYPE_PENDULUM) && vloc == LOCATION_HAND)
+			return TRUE;
+		return FALSE;
 	}
 	return pcard->current.is_location(real_range);
 }

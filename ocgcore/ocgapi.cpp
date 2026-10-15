@@ -65,6 +65,29 @@ void OCG_DuelNewCard(OCG_Duel ocg_duel, const OCG_NewCardInfo* info_ptr) {
 	const auto& info = *info_ptr;
 	if(bit::popcnt(info.loc) > 1)
 		return;
+	if(info.loc == LOCATION_DECK_MASTER) {
+		// Domain: the team's Deck Master starts the duel in the Deck Master Zone
+		constexpr uint32_t TYPE_SKILL_CARD = 0x8000000;
+		constexpr uint32_t TYPE_ACTION_CARD = 0x10000000;
+		if(info.duelist != 0 || info.team > 1 || !game_field.is_flag(DUEL_DOMAIN))
+			return;
+		auto& team = game_field.player[info.team];
+		if(team.deck_master)
+			return;
+		const auto& data = pduel->read_card(info.code);
+		if(!(data.type & TYPE_MONSTER) || (data.type & (TYPE_TOKEN | TYPE_SKILL_CARD | TYPE_ACTION_CARD)))
+			return;
+		card* pcard = pduel->new_card(info.code);
+		pcard->owner = info.team;
+		pcard->in_dmz = true;
+		team.deck_master = pcard;
+		game_field.add_card(info.team, pcard, 0, 0);
+		pcard->current.sequence = DMZ_SEQUENCE;
+		pcard->current.position = POS_FACEDOWN;
+		pcard->enable_field_effect(true);
+		game_field.adjust_instant();
+		return;
+	}
 	auto duelist = info.duelist;
 	if(duelist == 0) {
 		if(game_field.is_location_useable(info.con, info.loc, info.seq)) {
