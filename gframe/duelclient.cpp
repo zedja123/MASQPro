@@ -4681,15 +4681,16 @@ void DuelClient::SendResponse() {
 	case MSG_SELECT_UNSELECT_CARD:
 	case MSG_SELECT_CHAIN:
 	case MSG_CONFIRM_CARDS: {
+		// the selection lists can hold the temporary cards
+		if(msg == MSG_SELECT_CHAIN)
+			mainGame->dField.ClearChainSelect();
+		else if(msg != MSG_CONFIRM_CARDS)
+			mainGame->dField.ClearSelect();
 		for(auto& pcard : mainGame->dField.limbo_temp)
 			delete pcard;
 		mainGame->dField.limbo_temp.clear();
-		if(msg == MSG_SELECT_CHAIN)
-			mainGame->dField.ClearChainSelect();
-		if(msg != MSG_SELECT_CARD && msg != MSG_SELECT_UNSELECT_CARD)
-			break;
+		break;
 	}
-	[[fallthrough]];
 	case MSG_SELECT_TRIBUTE:
 	case MSG_SELECT_COUNTER: {
 		mainGame->dField.ClearSelect();
