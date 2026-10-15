@@ -118,6 +118,9 @@ public:
 	card_state temp{};
 	card_state current{};
 	uint8_t owner{ PLAYER_NONE };
+	// Domain: this card is a Deck Master in the Deck Master Zone
+	// (current.location 0, current.sequence DMZ_SEQUENCE, controlled by its owner, face-down)
+	bool in_dmz{ false };
 	struct summon_info {
 		uint32_t type{};
 		uint8_t player{};
@@ -186,6 +189,13 @@ public:
 		return (set_code & 0xfffu) == (to_match & 0xfffu) && (set_code & to_match) == set_code;
 	}
 	bool is_extra_deck_monster() const;
+	uint8_t dmz_virtual_location() const;
+	uint8_t effective_location() const {
+		return in_dmz ? dmz_virtual_location() : current.location;
+	}
+	bool is_deck_master() const;
+	uint32_t dmz_cost() const;
+	bool is_dmz_cost_payable() const;
 
 	void get_infos(uint32_t query_flag);
 	std::optional<uint64_t> get_assumed_property(uint32_t assume_type) const {

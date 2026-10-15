@@ -182,7 +182,7 @@ void field::special_summon(card_set target, uint32_t sumtype, uint8_t sumplayer,
 		pcard->temp.reason_effect = pcard->current.reason_effect;
 		pcard->temp.reason_player = pcard->current.reason_player;
 		pcard->summon.type = (sumtype & 0xf00ffff) | SUMMON_TYPE_SPECIAL;
-		pcard->summon.location = pcard->current.location;
+		pcard->summon.location = pcard->effective_location();
 		pcard->summon.sequence = pcard->current.sequence;
 		pcard->summon.pzone = pcard->current.pzone;
 		pcard->summon.player = sumplayer;
@@ -221,7 +221,7 @@ void field::special_summon_step(card* target, uint32_t sumtype, uint8_t sumplaye
 	target->temp.reason_effect = target->current.reason_effect;
 	target->temp.reason_player = target->current.reason_player;
 	target->summon.type = (sumtype & 0xf00ffff) | SUMMON_TYPE_SPECIAL;
-	target->summon.location = target->current.location;
+	target->summon.location = target->effective_location();
 	target->summon.sequence = target->current.sequence;
 	target->summon.pzone = target->current.pzone;
 	target->summon.player = sumplayer;
@@ -2440,7 +2440,7 @@ bool field::process(Processors::MonsterSet& arg) {
 	case 0: {
 		if(target->is_affected_by_effect(EFFECT_UNSUMMONABLE_CARD))
 			return TRUE;
-		if(target->current.location != LOCATION_HAND)
+		if(target->effective_location() != LOCATION_HAND)
 			return TRUE;
 		if(!(target->data.type & TYPE_MONSTER))
 			return TRUE;
@@ -3094,7 +3094,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		const auto sumtype = (retval.size() > 0 ? (static_cast<uint32_t>(retval[0]) & 0xf00ffff) : 0) | SUMMON_TYPE_SPECIAL;
 		uint32_t zone = retval.size() > 1 ? static_cast<uint32_t>(retval[1]) : 0xff;
 		target->summon.type = sumtype;
-		target->summon.location = target->current.location;
+		target->summon.location = target->effective_location();
 		target->summon.sequence = target->current.sequence;
 		target->summon.pzone = target->current.pzone;
 		target->enable_field_effect(false);
@@ -3401,7 +3401,7 @@ bool field::process(Processors::SpSummonRule& arg) {
 		pcard->summon.player = sumplayer;
 		const auto sumtype = (proc->get_value(pcard) & 0xff00ffff) | SUMMON_TYPE_SPECIAL;
 		pcard->summon.type = sumtype;
-		pcard->summon.location = pcard->current.location;
+		pcard->summon.location = pcard->effective_location();
 		pcard->summon.sequence = pcard->current.sequence;
 		pcard->summon.pzone = pcard->current.pzone;
 		effect_set eset;
@@ -3429,12 +3429,12 @@ bool field::process(Processors::SpSummonRule& arg) {
 		int32_t ct1 = get_tofield_count(pcard, sumplayer, LOCATION_MZONE, sumplayer, LOCATION_REASON_TOFIELD, zone, &flag1);
 		int32_t ct2 = get_spsummonable_count_fromex(pcard, sumplayer, sumplayer, zone, &flag2);
 		for(auto it = pgroup->it; it != pgroup->container.end(); ++it) {
-			if((*it)->current.location != LOCATION_EXTRA)
+			if((*it)->effective_location() != LOCATION_EXTRA)
 				--ct1;
 			else
 				--ct2;
 		}
-		if(pcard->current.location != LOCATION_EXTRA) {
+		if(pcard->effective_location() != LOCATION_EXTRA) {
 			if(ct2 == 0)
 				zone = flag2;
 		} else {
@@ -3678,6 +3678,7 @@ bool field::process(Processors::SpSummonRuleGroup& arg) {
 			core.reason_effect = peff;
 			core.reason_player = pcard->current.controler;
 			save_lp_cost();
+			dm_scope pendulum_scope(core.dm_pendulum_proc);
 			pduel->lua->add_param<LuaParam::EFFECT>(peff);
 			pduel->lua->add_param<LuaParam::CARD>(pcard);
 			pduel->lua->add_param<LuaParam::BOOLEAN>(TRUE);
@@ -3718,7 +3719,7 @@ bool field::process(Processors::SpSummonStep& arg) {
 	switch(arg.step) {
 	case 0: {
 		if(target->is_affected_by_effect(EFFECT_REVIVE_LIMIT) && !target->is_status(STATUS_PROC_COMPLETE)) {
-			if((!nolimit && (target->current.location & 0x38)) || (!nocheck && !nolimit && (target->current.location & 0x3))) {
+			if((!nolimit && (target->effective_location() & 0x38)) || (!nocheck && !nolimit && (target->effective_location() & 0x3))) {
 				arg.step = 4;
 				return FALSE;
 			}
@@ -3731,7 +3732,7 @@ bool field::process(Processors::SpSummonStep& arg) {
 			return FALSE;
 		}
 		if(get_useable_count(target, playerid, LOCATION_MZONE, target->summon.player, LOCATION_REASON_TOFIELD, zone) <= 0) {
-			if(target->current.location != LOCATION_GRAVE)
+			if(target->current.location != LOCATION_GRAVE && !target->in_dmz)
 				core.ss_tograve_set.insert(target);
 			arg.step = 4;
 			return FALSE;
@@ -3780,12 +3781,12 @@ bool field::process(Processors::SpSummonStep& arg) {
 			for(auto& pcard : targets->container) {
 				if(pcard->current.location == LOCATION_MZONE)
 					continue;
-				if(pcard->current.location != LOCATION_EXTRA)
+				if(pcard->effective_location() != LOCATION_EXTRA)
 					--ct1;
 				else
 					--ct2;
 			}
-			if(target->current.location != LOCATION_EXTRA) {
+			if(target->effective_location() != LOCATION_EXTRA) {
 				if(ct2 == 0) {
 					zone &= flag2;
 					if(!extra)
@@ -5306,6 +5307,11 @@ bool field::process(Processors::MoveToField& arg) {
 				}
 			}
 		}
+		// Domain: a Deck Master leaving the Deck Master Zone pays its cost now; this is not a zone change
+		const bool from_dmz = target->in_dmz;
+		const bool dm_moved = from_dmz && player[target->owner].dm_moved;
+		if(from_dmz)
+			dmz_leave(target, true);
 		auto message = pduel->new_message(MSG_MOVE);
 		message->write<uint32_t>(target->data.code);
 		message->write(target->get_info_location());
@@ -5317,6 +5323,10 @@ bool field::process(Processors::MoveToField& arg) {
 		target->set_status(STATUS_LEAVE_CONFIRMED, FALSE);
 		message->write(target->get_info_location());
 		message->write<uint32_t>(target->current.reason);
+		if(from_dmz) {
+			player[target->owner].dm_moved = dm_moved;
+			dmz_hint(target, HINT_DMZ_REMOVE);
+		}
 		if((target->current.location != LOCATION_MZONE)) {
 			if(target->equiping_cards.size()) {
 				destroy(target->equiping_cards, nullptr, REASON_LOST_TARGET + REASON_RULE, PLAYER_NONE);

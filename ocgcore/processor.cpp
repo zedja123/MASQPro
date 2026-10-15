@@ -7,6 +7,7 @@
 #include <algorithm> //std::sort, std::find_if_not, std::find, std::max
 #include <array>
 #include <iterator> //std::next
+#include <optional>
 #include <set>
 #include <utility> //std::make_pair, std::exchange, std::move, std::swap
 #include "duel.h"
@@ -109,7 +110,17 @@ bool field::process(Processors::ExecuteOperation& arg) {
 	core.reason_player = triggering_player;
 	uint32_t count = static_cast<uint32_t>(pduel->lua->params.size());
 	lua_Integer yield_value = 0;
-	int32_t result = pduel->lua->call_coroutine(triggering_effect->operation, count, &yield_value, step);
+	int32_t result;
+	{
+		// Domain: cost effects see a Deck Master in the Deck Master Zone where it really is,
+		// a Pendulum Summon procedure sees a Main Deck one as if it were in the hand
+		std::optional<dm_scope> scope;
+		if(dmz_is_cost_code(triggering_effect))
+			scope.emplace(core.dm_cost_check);
+		else if(triggering_effect->code == EFFECT_SPSUMMON_PROC_G && !(triggering_effect->type & EFFECT_TYPE_ACTIONS))
+			scope.emplace(core.dm_pendulum_proc);
+		result = pduel->lua->call_coroutine(triggering_effect->operation, count, &yield_value, step);
+	}
 	returns.set<int32_t>(0, static_cast<int32_t>(yield_value));
 	if (result != COROUTINE_YIELD) {
 		core.reason_effect = nullptr;
@@ -298,6 +309,11 @@ bool field::process(Processors::PhaseEvent& arg) {
 	auto phase = arg.phase;
 	switch(arg.step) {
 	case 0: {
+		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
+			emplace_process<Processors::DomainReturn>();
+			arg.step = Processors::restart;
+			return FALSE;
+		}
 		if((phase == PHASE_DRAW && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_DP)))
 				|| (phase == PHASE_STANDBY && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_SP)))
 				|| (phase == PHASE_BATTLE_START && (core.force_turn_end || is_player_affected_by_effect(infos.turn_player, EFFECT_SKIP_BP)))
@@ -1449,6 +1465,11 @@ int32_t field::process_single_event(effect* peffect, const tevent& e, chain_list
 bool field::process(Processors::IdleCommand& arg) {
 	switch(arg.step) {
 	case 0: {
+		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
+			emplace_process<Processors::DomainReturn>();
+			arg.step = Processors::restart;
+			return FALSE;
+		}
 		bool must_attack = false;
 		core.select_chains.clear();
 		nil_event.event_code = EVENT_FREE_CHAIN;
@@ -1532,6 +1553,9 @@ bool field::process(Processors::IdleCommand& arg) {
 		for(auto& pcard : player[infos.turn_player].list_hand)
 			if(pcard->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
 				core.summonable_cards.push_back(pcard);
+		card* deck_master = dmz_card(infos.turn_player);
+		if(deck_master && deck_master->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
+			core.summonable_cards.push_back(deck_master);
 		for(auto& pcard : player[infos.turn_player].list_mzone) {
 			if(pcard && pcard->is_can_be_summoned(infos.turn_player, FALSE, nullptr, 0))
 				core.summonable_cards.push_back(pcard);
@@ -1559,10 +1583,13 @@ bool field::process(Processors::IdleCommand& arg) {
 			core.reason_effect = peff;
 			core.reason_player = pcard->current.controler;
 			save_lp_cost();
-			pduel->lua->add_param<LuaParam::EFFECT>(peff);
-			pduel->lua->add_param<LuaParam::CARD>(pcard);
-			if(pduel->lua->check_condition(peff->condition, 2))
-				core.spsummonable_cards.push_back(pcard);
+			{
+				dm_scope pendulum_scope(core.dm_pendulum_proc);
+				pduel->lua->add_param<LuaParam::EFFECT>(peff);
+				pduel->lua->add_param<LuaParam::CARD>(pcard);
+				if(pduel->lua->check_condition(peff->condition, 2))
+					core.spsummonable_cards.push_back(pcard);
+			}
 			restore_lp_cost();
 			core.reason_effect = oreason;
 			core.reason_player = op;
@@ -1581,6 +1608,8 @@ bool field::process(Processors::IdleCommand& arg) {
 			if(pcard->is_setable_szone(infos.turn_player))
 				core.ssetable_cards.push_back(pcard);
 		}
+		if(deck_master && deck_master->is_setable_mzone(infos.turn_player, FALSE, nullptr, 0))
+			core.msetable_cards.push_back(deck_master);
 		emplace_process<Processors::SelectIdleCmd>(infos.turn_player);
 		return FALSE;
 	}
@@ -1788,6 +1817,11 @@ bool field::process(Processors::IdleCommand& arg) {
 bool field::process(Processors::BattleCommand& arg) {
 	switch(arg.step) {
 	case 0: {
+		if(is_flag(DUEL_DOMAIN) && (player[0].dm_moved || player[1].dm_moved)) {
+			emplace_process<Processors::DomainReturn>();
+			arg.step = Processors::restart;
+			return FALSE;
+		}
 		core.select_chains.clear();
 		nil_event.event_code = EVENT_FREE_CHAIN;
 		if(!core.chain_attack) {
@@ -3645,8 +3679,11 @@ bool field::process(Processors::AddChain& arg) {
 			pduel->lua->add_param<LuaParam::EFFECT>(peff);
 			pduel->lua->add_param<LuaParam::EFFECT>(clit.triggering_effect);
 			pduel->lua->add_param<LuaParam::INT>(clit.triggering_player);
-			if(!pduel->lua->check_condition(peff->target, 3))
-				continue;
+			{
+				dm_scope cost_scope(core.dm_cost_check);
+				if(!pduel->lua->check_condition(peff->target, 3))
+					continue;
+			}
 			if(peff->operation) {
 				core.sub_solving_event.push_back(clit.evt);
 				emplace_process<Processors::ExecuteOperation>(peff, clit.triggering_player);
@@ -3678,7 +3715,7 @@ bool field::process(Processors::AddChain& arg) {
 				loc = peffect->get_value();
 				if(!loc)
 					return TRUE;
-			} else if(phandler->current.location == LOCATION_HAND) {
+			} else if(phandler->effective_location() == LOCATION_HAND) {
 				if(phandler->data.type & TYPE_PENDULUM) {
 					loc = LOCATION_PZONE;
 				} else if(phandler->data.type & TYPE_FIELD) {
@@ -5009,6 +5046,10 @@ bool field::process(Processors::Adjust& arg) {
 bool field::process(Processors::Startup& arg) {
 	switch(arg.step) {
 	case 0: {
+		for(auto& pl : player) {
+			if(pl.deck_master)
+				dmz_hint(pl.deck_master, HINT_DMZ);
+		}
 		core.shuffle_hand_check[0] = false;
 		core.shuffle_hand_check[1] = false;
 		core.shuffle_deck_check[0] = false;
@@ -5218,4 +5259,64 @@ bool field::process(Processors::RefreshRelay& arg) {
 	default:
 		return TRUE;
 	}
+}
+// Domain: right before the game state is open again, each player whose Deck Master changed zone type
+// since the last open game state (turn player first) may return it to the Deck Master Zone.
+// The return does not start a chain; the events it raises are handled by a new PointEvent.
+bool field::process(Processors::DomainReturn& arg) {
+	const uint8_t playerid = (arg.check_index == 0) ? infos.turn_player : 1 - infos.turn_player;
+	switch(arg.step) {
+	case 0: {
+		if(arg.check_index > 1) {
+			if(arg.returned)
+				emplace_process<Processors::PointEvent>(false, true, false);
+			return TRUE;
+		}
+		auto& cur_player = player[playerid];
+		card* dm = cur_player.deck_master;
+		const bool moved = cur_player.dm_moved;
+		cur_player.dm_moved = false;
+		if(!moved || !dm || dm->in_dmz || dm->overlay_target || dm->current.location == 0
+			|| (dm->current.location & (LOCATION_ONFIELD | LOCATION_OVERLAY))) {
+			++arg.check_index;
+			arg.step = Processors::restart;
+			return FALSE;
+		}
+		emplace_process<Processors::SelectEffectYesNo>(playerid, 7112, dm);
+		return FALSE;
+	}
+	case 1: {
+		if(returns.at<int32_t>(0)) {
+			card* dm = player[playerid].deck_master;
+			const uint8_t oloc = dm->current.location;
+			dm->current.reason = REASON_RULE;
+			dm->current.reason_effect = nullptr;
+			dm->current.reason_player = playerid;
+			auto message = pduel->new_message(MSG_MOVE);
+			message->write<uint32_t>(dm->data.code);
+			message->write(dm->get_info_location());
+			dmz_enter(dm);
+			++player[playerid].dm_returns;
+			message->write(dm->get_info_location());
+			message->write<uint32_t>(dm->current.reason);
+			dmz_hint(dm, HINT_DMZ);
+			if(oloc == LOCATION_DECK)
+				shuffle(playerid, LOCATION_DECK);
+			if(oloc == LOCATION_GRAVE) {
+				raise_single_event(dm, nullptr, EVENT_LEAVE_GRAVE, nullptr, REASON_RULE, playerid, 0, 0);
+				raise_event(dm, EVENT_LEAVE_GRAVE, nullptr, REASON_RULE, playerid, 0, 0);
+			}
+			raise_single_event(dm, nullptr, EVENT_MOVE, nullptr, REASON_RULE, playerid, 0, 0);
+			raise_event(dm, EVENT_MOVE, nullptr, REASON_RULE, playerid, 0, 0);
+			process_single_event();
+			process_instant_event();
+			adjust_instant();
+			arg.returned = true;
+		}
+		++arg.check_index;
+		arg.step = Processors::restart;
+		return FALSE;
+	}
+	}
+	return TRUE;
 }
