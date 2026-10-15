@@ -370,7 +370,15 @@ void GenericDuel::PlayerReady(DuelPlayer* dp, bool is_ready) {
 	if(dueler.ready == is_ready)
 		return;
 	if(is_ready) {
-		DeckError deck_error = DeckManager::CheckDeckSize(dueler.pdeck, host_info.sizes);
+		DeckError deck_error{ DeckError::NONE };
+		// Domain: the Deck Master is checked first, even without content checks.
+		if(const auto* lflist = gdeckManager->GetLFList(host_info.lflist); IsDomain() && lflist && lflist->domain) {
+			deck_error = DeckManager::CheckDeckMaster(dueler.pdeck, *lflist, !host_info.no_check_deck_content);
+			if(deck_error.type == DeckError::DOMAIN_DECK_MASTER && !dueler.pdeck.master)
+				deck_error.code = dueler.master_code;
+		}
+		if(deck_error.type == DeckError::NONE)
+			deck_error = DeckManager::CheckDeckSize(dueler.pdeck, host_info.sizes);
 		if(deck_error.type == DeckError::NONE && !host_info.no_check_deck_content) {
 			if(dueler.deck_error) {
 				deck_error.type = DeckError::UNKNOWNCARD;
@@ -419,11 +427,15 @@ void GenericDuel::UpdateDeck(DuelPlayer* dp, void* pdata, uint32_t len) {
 		return;
 	}
 	bool rituals_in_extra = host_info.duel_flag_high & (DUEL_EXTRA_DECK_RITUAL >> 32);
+	// Domain: optional Deck Master trailer after the side codes.
+	const auto cards_size = (mainc + sidec) * sizeof(uint32_t);
+	const auto master = DeckManager::ReadDeckMasterTrailer(deckbuf + cards_size, len - 8 - cards_size);
 	if(match_result.empty()) {
-		dueler.deck_error = DeckManager::LoadDeckFromBuffer(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra ? RITUAL_LOCATION::EXTRA : RITUAL_LOCATION::MAIN);
+		dueler.deck_error = DeckManager::LoadDeckFromBuffer(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra ? RITUAL_LOCATION::EXTRA : RITUAL_LOCATION::MAIN, master);
+		dueler.master_code = master;
 		dueler.odeck = dueler.pdeck;
 	} else {
-		if(DeckManager::LoadSide(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra)) {
+		if(DeckManager::LoadSide(dueler.pdeck, (uint32_t*)deckbuf, mainc, sidec, rituals_in_extra, master, IsDomain())) {
 			dueler.ready = true;
 			NetServer::SendPacketToPlayer(dp, STOC_DUEL_START);
 			if(CheckReady()) {
@@ -575,11 +587,15 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
 	const auto seed = Utils::GetRandomNumberGeneratorSeed();
 	auto replay_header = ExtendedReplayHeader::CreateDefaultHeader(REPLAY_YRP1, static_cast<uint32_t>(time(nullptr)));
 	replay_header.SetSeed(seed);
+	// Domain: the decks in the YRP1 replay carry the Deck Masters.
+	if(IsDomain())
+		replay_header.base.flag |= REPLAY_DOMAIN;
 	last_replay.BeginRecord(true, EPRO_TEXT("./replay/_LastReplay.yrp"));
 	last_replay.WriteHeader(replay_header);
 	//records the replay with the new system
 	new_replay.BeginRecord();
 	replay_header.base.id = REPLAY_YRPX;
+	replay_header.base.flag &= ~REPLAY_DOMAIN;
 	new_replay.WriteHeader(replay_header);
 	last_replay.Write<uint32_t>(static_cast<uint32_t>(players.home.size()), false);
 	new_replay.Write<uint32_t>(static_cast<uint32_t>(players.home.size()), false);
@@ -662,6 +678,7 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
 			OCG_DuelNewCard(pduel, &card_info);
 			last_replay.Write<uint32_t>(dueler.pdeck.extra[i]->code, false);
 		}
+		AddDeckMaster(dueler, card_info);
 	}
 	card_info.team = 1;
 	card_info.con = 1;
@@ -687,6 +704,7 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
 			OCG_DuelNewCard(pduel, &card_info);
 			last_replay.Write<uint32_t>(dueler.pdeck.extra[i]->code, false);
 		}
+		AddDeckMaster(dueler, card_info);
 	}
 	last_replay.Write<uint32_t>(static_cast<uint32_t>(extracards.size()), false);
 	for (auto it = extracards.crbegin(), end = extracards.crend(); it != end; ++it) {
@@ -726,6 +744,26 @@ void GenericDuel::TPResult(DuelPlayer* dp, uint8_t tp) {
 	new_replay.WriteStream(replay_stream);
 	OCG_StartDuel(pduel);
 	Process();
+}
+bool GenericDuel::IsDomain() const {
+	return host_info.duel_flag_high & (DUEL_DOMAIN >> 32);
+}
+// Domain: the Deck Master goes in right after its duelist's Extra Deck, and
+// the replay deck block gets the Deck Master count and code.
+void GenericDuel::AddDeckMaster(const duelist& dueler, OCG_NewCardInfo card_info) {
+	if(!IsDomain())
+		return;
+	const auto* master = dueler.pdeck.master;
+	last_replay.Write<uint32_t>(master ? 1 : 0, false);
+	if(!master)
+		return;
+	card_info.duelist = 0;
+	card_info.code = master->code;
+	card_info.loc = LOCATION_DECK_MASTER;
+	card_info.seq = 0;
+	card_info.pos = POS_FACEDOWN;
+	OCG_DuelNewCard(pduel, &card_info);
+	last_replay.Write<uint32_t>(master->code, false);
 }
 void GenericDuel::Process() {
 	std::vector<uint8_t> duelBuffer;
@@ -868,6 +906,13 @@ void GenericDuel::Sending(CoreUtils::Packet& packet, int& return_value, bool& re
 		case 203: {
 			SEND(nullptr);
 			ResendToAll();
+			break;
+		}
+		case HINT_DMZ:
+		case HINT_DMZ_REMOVE: {
+			SEND(nullptr);
+			ResendToAll();
+			packets_cache.push_back(packet);
 			break;
 		}
 		case 200: {

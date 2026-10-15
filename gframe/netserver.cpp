@@ -358,12 +358,6 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
 			NetServer::SendPacketToPlayer(dp, STOC_ERROR_MSG, vererr);
 			return;
 		}
-		pkt.info.team1 = std::max(1, std::min(pkt.info.team1, 3));
-		pkt.info.team2 = std::max(1, std::min(pkt.info.team2, 3));
-		duel_mode = new GenericDuel(pkt.info.team1, pkt.info.team2, !!(pkt.info.duel_flag_low & DUEL_RELAY), pkt.info.best_of);
-		duel_mode->etimer = event_new(net_evbase, 0, EV_TIMEOUT | EV_PERSIST, GenericDuel::GenericTimer, duel_mode);
-		timeval timeout = { 1, 0 };
-		event_add(duel_mode->etimer, &timeout);
 		uint32_t hash = 1;
 		for(auto lfit = gdeckManager->_lfList.begin(); lfit != gdeckManager->_lfList.end(); ++lfit) {
 			if(pkt.info.lflist == lfit->hash) {
@@ -373,12 +367,35 @@ void NetServer::HandleCTOSPacket(DuelPlayer* dp, uint8_t* data, uint32_t len) {
 		}
 		if(hash == 1)
 			pkt.info.lflist = gdeckManager->_lfList[0].hash;
+		const auto* lflist = gdeckManager->GetLFList(pkt.info.lflist);
 		// Genesys lists force the Genesys field: no Pendulum Zones, no Extra
 		// Monster Zones, no Link or Pendulum Monsters.
-		if(const auto* lflist = gdeckManager->GetLFList(pkt.info.lflist); lflist && lflist->genesys) {
+		if(lflist && lflist->genesys) {
 			pkt.info.duel_flag_low &= ~static_cast<uint32_t>(DUEL_PZONE | DUEL_SEPARATE_PZONE | DUEL_EMZONE);
 			pkt.info.forbiddentypes |= DUEL_MODE_GENESYS_FORB;
 		}
+		// Domain follows the banlist only: a Domain list forces the Domain
+		// rule (1 vs 1, its deck sizes, no extra rules), any other list
+		// clears it.
+		if(lflist && lflist->domain) {
+			static constexpr DeckSizes domain_deck_sizes{ {60,60}, {0,15}, {0,0} };
+			// Only the TCG chain building option is kept.
+			const auto tcg = pkt.info.duel_flag_high & static_cast<uint32_t>(DUEL_TCG_SEGOC_NONPUBLIC >> 32);
+			pkt.info.duel_flag_low = static_cast<uint32_t>(DUEL_MODE_DOMAIN & 0xffffffff);
+			pkt.info.duel_flag_high = static_cast<uint32_t>(DUEL_MODE_DOMAIN >> 32) | tcg;
+			pkt.info.forbiddentypes = DUEL_MODE_DOMAIN_FORB;
+			pkt.info.sizes = domain_deck_sizes;
+			pkt.info.team1 = pkt.info.team2 = 1;
+			pkt.info.extra_rules = 0;
+		} else {
+			pkt.info.duel_flag_high &= ~static_cast<uint32_t>(DUEL_DOMAIN >> 32);
+		}
+		pkt.info.team1 = std::max(1, std::min(pkt.info.team1, 3));
+		pkt.info.team2 = std::max(1, std::min(pkt.info.team2, 3));
+		duel_mode = new GenericDuel(pkt.info.team1, pkt.info.team2, !!(pkt.info.duel_flag_low & DUEL_RELAY), pkt.info.best_of);
+		duel_mode->etimer = event_new(net_evbase, 0, EV_TIMEOUT | EV_PERSIST, GenericDuel::GenericTimer, duel_mode);
+		timeval timeout = { 1, 0 };
+		event_add(duel_mode->etimer, &timeout);
 		duel_mode->host_info = pkt.info;
 		BufferIO::DecodeUTF16(pkt.name, duel_mode->name, 20);
 		BufferIO::DecodeUTF16(pkt.pass, duel_mode->pass, 20);

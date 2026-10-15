@@ -571,8 +571,9 @@ public:
 
 	uint8_t LocalPlayer(uint8_t player);
 	void UpdateDuelParam();
-	void ApplyGenesysHostRules();
-	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list.
+	void ApplyFormatHostRules(bool rule_changed = false);
+	// WindBot master rule filter; the Genesys rule (index 8) uses the MR5 list,
+	// the Domain rule (index 9) matches no bot.
 	int BotRuleFilter() const;
 	void LockGenesysZones(bool lock);
 	void UpdateExtraRules(bool set = false);
@@ -740,6 +741,16 @@ public:
 	irr::gui::CGUITTFont* genesysFont{ nullptr };
 	irr::gui::IGUICheckBox* chkGenesys{ nullptr };
 	bool IsGenesysActive() const;
+	irr::gui::IGUICheckBox* chkDomain{ nullptr };
+	// Domain deck editing: the Deck Master pane replaces the Side Deck row.
+	// The Deck Master is drawn at its start, Side Deck cards (none in a legal
+	// Domain deck) from DOMAIN_SIDE_X on.
+	bool IsDomainActive() const;
+	static constexpr int DOMAIN_SIDE_X = 380;
+	static float DomainSideStep(size_t count) {
+		constexpr float width = 794.0f - DOMAIN_SIDE_X - 44.0f;
+		return count <= 8 ? width / 7.0f : width / (count - 1);
+	}
 	void DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect);
 	std::map<irr::gui::CGUIImageButton*, uint32_t> imageLoading;
 	//hint text

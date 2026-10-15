@@ -546,6 +546,29 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
 				text = epro::sprintf(fmt, curcount, mainmax);
 				break;
 			}
+			case DeckError::DOMAIN_DECK_MASTER: {
+				text = gDataManager->HasSysString(7115) ? gDataManager->GetSysString(7115).data()
+					: L"Domain: your deck needs exactly 1 Deck Master, a Main or Extra Deck monster.";
+				break;
+			}
+			case DeckError::DOMAIN_OUT_OF_DOMAIN: {
+				const auto fmt = gDataManager->HasSysString(7116) ? gDataManager->GetSysString(7116)
+					: L"Domain: \"%ls\" is outside your Deck Master's domain."sv;
+				text = epro::sprintf(fmt, gDataManager->GetName(code));
+				break;
+			}
+			case DeckError::DOMAIN_SINGLETON: {
+				const auto fmt = gDataManager->HasSysString(7117) ? gDataManager->GetSysString(7117)
+					: L"Domain: only 1 copy of \"%ls\" is allowed."sv;
+				text = epro::sprintf(fmt, gDataManager->GetName(code));
+				break;
+			}
+			case DeckError::DOMAIN_FORBIDDEN_DM: {
+				const auto fmt = gDataManager->HasSysString(7118) ? gDataManager->GetSysString(7118)
+					: L"Domain: \"%ls\" cannot be your Deck Master."sv;
+				text = epro::sprintf(fmt, gDataManager->GetName(code));
+				break;
+			}
 			default: {
 				text = gDataManager->GetSysString(1406).data();
 				break;
@@ -754,7 +777,9 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
 		mainGame->dInfo.duel_field = mainGame->GetMasterRule(params & ~DUEL_TCG_SEGOC_NONPUBLIC, pkt.info.forbiddentypes, &rule);
 		if(mainGame->dInfo.compat_mode)
 			rule = pkt.info.duel_rule;
-		if (rule >= 6) {
+		if(!mainGame->dInfo.compat_mode && (params & DUEL_DOMAIN)) {
+			str.append(epro::format(L"*{}\n", gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111) : L"Domain"sv));
+		} else if (rule >= 6) {
 			if(params == DUEL_MODE_SPEED) {
 				str.append(epro::format(L"*{}\n", gDataManager->GetSysString(1258)));
 			} else if(params == DUEL_MODE_RUSH) {
@@ -4720,6 +4745,8 @@ void DuelClient::BroadcastReply(evutil_socket_t fd, short events, void* arg) {
 				if(!is_compact_mode) {
 					auto duel_flag = (((uint64_t)packet.host.duel_flag_low) | ((uint64_t)packet.host.duel_flag_high) << 32);
 					mainGame->GetMasterRule(duel_flag & ~(DUEL_RELAY | DUEL_TCG_SEGOC_NONPUBLIC | DUEL_PSEUDO_SHUFFLE), packet.host.forbiddentypes, &rule);
+					if(duel_flag & DUEL_DOMAIN)
+						return std::wstring{ gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111) : L"Domain"sv };
 					if(rule == 6) {
 						if(duel_flag == DUEL_MODE_GOAT)
 							return L"GOAT";

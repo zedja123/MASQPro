@@ -136,6 +136,17 @@ namespace ygo {
 				OCG_DuelNewCard(pduel, &card_info);
 			}
 			const auto& decks = cur_yrp->GetPlayerDecks();
+			// Domain: each Deck Master right after its duelist's Extra Deck.
+			const auto add_master = [&](const ReplayDeck& deck, OCG_NewCardInfo info) {
+				if(!deck.master)
+					return;
+				info.duelist = 0;
+				info.code = deck.master;
+				info.loc = LOCATION_DECK_MASTER;
+				info.seq = 0;
+				info.pos = POS_FACEDOWN;
+				OCG_DuelNewCard(pduel, &info);
+			};
 			for(int i = 0; i < mainGame->dInfo.team1; i++) {
 				card_info.duelist = i;
 				card_info.loc = LOCATION_DECK;
@@ -148,6 +159,7 @@ namespace ygo {
 					card_info.code = card;
 					OCG_DuelNewCard(pduel, &card_info);
 				}
+				add_master(decks[i], card_info);
 			}
 			card_info.team = 1;
 			card_info.con = 1;
@@ -163,6 +175,7 @@ namespace ygo {
 					card_info.code = card;
 					OCG_DuelNewCard(pduel, &card_info);
 				}
+				add_master(decks[i + mainGame->dInfo.team1], card_info);
 			}
 			if(replay_header.base.flag & REPLAY_HAND_TEST) {
 				const char cmd[] = "Debug.ReloadFieldEnd()";
