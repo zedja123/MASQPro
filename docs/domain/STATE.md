@@ -1,6 +1,6 @@
 # Domain format port — working state
 
-Last saved: 2026-10-15 00:35 UTC (21:35 GMT-3).
+Last saved: 2026-10-15 12:00 UTC (09:00 GMT-3).
 
 ## Request
 Port the fan-made Domain format (rulebook v1.4) to MASQPro as a master rule like Genesys, with a
@@ -23,27 +23,16 @@ card scripts must not be.
 
 | Component | Where | State |
 |---|---|---|
-| Shared constants | MASQPro local branches `domain-core` and `domain-client`, commit `7fbe9527` | Done |
-| Domain list data | LFListsZedja local branch `claude/clever-cori-fy407t`, commits `6c068a4`, `9b9b648`, `c5c6fb1`; client copy commit `bd305388` | Done. 9,379 `#@dm` lines, hash `0xBC3B2D7E`. Report: `wip/data-agent-report.md` |
-| Engine (ocgcore) | worktree `/home/user/wt/core`, branch `domain-core` | In progress, uncommitted. Snapshot: `wip/engine-wip.patch` (includes `tests/domain/`) |
-| Client deck building / host / network / replays | worktree `/home/user/wt/client`, branch `domain-client` | In progress, uncommitted. Snapshot: `wip/client-wip.patch` |
-| Client duel UI (DMZ on the field) | same worktree | Not started |
-| Multirole | `/home/user/multirole`, branch `claude/clever-cori-fy407t` | Not started |
-| Merge, full build, review, PRs | — | Not started |
+| Engine (ocgcore) | MASQPro PR #4 | Done: 42/42 engine scenarios, 150 non-Domain duels identical to the base core, 300 random Domain duels clean |
+| Client deck building / host / network / replays | MASQPro PR #4 | Done: matches the reference on all list hashes and 600 random decks; not run on a display |
+| Client duel UI (Deck Master Zone) | MASQPro PR #4 | Done: message-level test passes; not run on a display |
+| Domain list data + generator + reference | LFListsZedja PR #3 (copy in MASQPro `lflists/`) | Done: hash 0xBC3B2D7E |
+| Multirole | Multirole PR #3 | Done: test suite passes against the reference; not run end-to-end with hornet |
+| CI | MASQPro PR #4 head 0da30e2 | Green on every platform |
+| Adversarial review of the whole diff | — | In progress (rerun after a session limit) |
+| Four-player | — | Not started; analysis in `research/4p/` |
 
-## How to resume
-- If the worktrees still exist: continue the uncommitted work there (agents must be told to read the
-  existing diff first and continue, not restart).
-- If the container was reclaimed: recreate the branches from `origin/claude/clever-cori-fy407t`
-  (this commit) and apply the patches in `wip/`:
-  `git am wip/shared-constants.patch`, then `git apply wip/engine-wip.patch` (engine branch) or
-  `git am wip/client-domain-list.patch && git apply wip/client-wip.patch` (client branch);
-  LFListsZedja: `git am wip/lflistszedja-domain.patch` on top of `7304110`.
-- Build notes: client via premake5 gmake2 + `make -Cbuild config=release_x64 ygopro` with the vcpkg
-  cache bundle; engine tests via CardScripts `.claude/skills/edopro-card-scripting/tools`
-  (`loadcheck.py setup` with `EDOPRO_CORE` pointing at the engine sources, then
-  `tests/domain/domain_scenarios.py`); Multirole via meson.
-- `wip/implement-workflow.js` is the orchestration script used for the implementation phase.
+Implementer reports: `wip/*.md` (engine, client, multirole, data).
 
 ## Decisions already taken
 - Deck Master Zone = card outside all zones (location 0, sequence 0xFF), let back in only by the
