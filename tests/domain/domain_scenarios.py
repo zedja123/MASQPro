@@ -66,6 +66,10 @@ GRACEFUL_CHARITY = 79571449
 DARK_MAGICIAN = 46986414
 ODD_EYES_VENOM = 45014450    # Fusion Pendulum, Level 10
 TENSU = 10719350             # Fire Formation - Tensu: extra Normal Summon of a Beast-Warrior
+FLASH_KNIGHT = 17390179      # Level 4 Normal Pendulum, scale 7
+SANGAN = 26202165
+CED = 94192409               # Compulsory Evacuation Device
+ULTIMATE_OFFERING = 80604091
 
 
 # ---------------------------------------------------------------- helpers
@@ -763,6 +767,116 @@ def not_enough_lp_for_cost():
 	play(d, [Phase("ep")], stop="idle", player=1)
 	play(d, [Phase("ep", player=1)], stop="idle", player=0)
 	expect(not dmz_entry(d, "summon", GENE_WARPED), "DM summonable with less LP than its cost")
+	return d
+
+
+@test
+def pendulum_dm_cycle():
+	"""Normal Summoned Pendulum DM: no Pendulum activation left on the field; destroyed it goes face-up to the
+	Extra Deck, returns from there face-down and can be activated as a Pendulum Scale again for 500 LP."""
+	d = domain_duel()
+	add_dm(d, FLASH_KNIGHT)
+	d.add(DARK_HOLE, 0, "hand")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	play(d, [Summon(FLASH_KNIGHT, "summon")])
+	expect(not [x for x in d.pending.data["activate"] if x["code"] == FLASH_KNIGHT],
+	       f"Pendulum activation still offered after the DM left the DMZ: {d.pending.data['activate']}")
+	n0 = len(d.messages)
+	play(d, [Act(DARK_HOLE), Answer(True, desc=DESC_RETURN)])
+	mv = [m for m in moves(d, FLASH_KNIGHT, n0) if m.data["cur"]["loc"] == 0]
+	expect(mv and mv[-1].data["prev"]["loc"] == 0x40 and mv[-1].data["cur"]["pos"] == POS_FACEDOWN,
+	       f"Pendulum DM not returned from the Extra Deck face-down: {mv and mv[-1].data}")
+	acts = [x for x in d.pending.data["activate"] if x["code"] == FLASH_KNIGHT]
+	expect(len(acts) == 1 and is_dmz(acts[0]), f"Pendulum activation from the DMZ after the return: {acts}")
+	n1 = len(d.messages)
+	play(d, [Act(FLASH_KNIGHT)])
+	expect(lua_bool(d, f"Duel.IsExistingMatchingCard(Card.IsCode,0,LOCATION_PZONE,0,1,nil,{FLASH_KNIGHT})"),
+	       "not placed in a Pendulum Zone")
+	expect(lp_costs(d, n1) == [(0, 500)] and lp(d) == 7500, f"cost {lp_costs(d, n1)}, LP {lp(d)}")
+	return d
+
+
+@test
+def dm_trigger_resolves_before_prompt():
+	"""Sangan as DM: its GY trigger chains and resolves first, then the return is offered."""
+	d = domain_duel()
+	add_dm(d, SANGAN)
+	d.add(DARK_HOLE, 0, "hand")
+	d.add(FLAME_MANIPULATOR, 0, "deck")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	play(d, [Summon(SANGAN, "summon")])
+	n0 = len(d.messages)
+	play(d, [Act(DARK_HOLE), Pick(FLAME_MANIPULATOR), Answer(True, desc=DESC_RETURN)])
+	search = [m for m in moves(d, FLAME_MANIPULATOR, n0) if m.data["cur"]["loc"] == 0x02]
+	pr = return_prompts(d, 0, n0)
+	expect(search, "Sangan did not resolve")
+	expect(pr and d.messages.index(pr[0]) > d.messages.index(search[0]), "return offered before Sangan resolved")
+	expect(in_dmz(d, SANGAN), "Sangan not returned")
+	return d
+
+
+@test
+def abc_contact_fusion_again_after_return():
+	"""After a return the DM is face-down again, so ABC-Dragon Buster's Contact Fusion works a second time."""
+	d = domain_duel()
+	add_dm(d, ABC)
+	for c in (A_CORE, B_DRAKE, C_WYVERN) * 2:
+		d.add(c, 0, "grave")
+	d.add(DARK_HOLE, 0, "hand")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	play(d, [Summon(ABC), Pick(A_CORE, B_DRAKE, C_WYVERN), Act(DARK_HOLE), Answer(True, desc=DESC_RETURN)])
+	expect(in_dmz(d, ABC), "ABC-Dragon Buster not returned")
+	expect(dmz_entry(d, "spsummon", ABC), "Contact Fusion not available again after the return")
+	n1 = len(d.messages)
+	play(d, [Summon(ABC), Pick(A_CORE, B_DRAKE, C_WYVERN)])
+	expect(ABC in d.codes(0, "mzone"), "ABC-Dragon Buster not summoned again")
+	expect(lp_costs(d, n1) == [(0, 500)], f"second Contact Fusion cost {lp_costs(d, n1)}")
+	return d
+
+
+@test
+def bounced_dm_declined_is_free_from_hand():
+	"""Returned to the hand by the opponent: the return is offered; declined, it is an ordinary hand card
+	(summoning it costs nothing and does not touch the DMZ)."""
+	d = domain_duel()
+	add_dm(d, GENE_WARPED)
+	setup_lua(d, f"Debug.AddCard({CED},1,1,LOCATION_SZONE,1,POS_FACEDOWN_DEFENSE)\n")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	n0 = len(d.messages)
+	play(d, [Summon(GENE_WARPED, "summon"), Act(CED, player=1), Pick(GENE_WARPED, player=1),
+	         Answer(False, desc=DESC_RETURN)])
+	expect(len(return_prompts(d, 0, n0)) == 1, "return not offered once after the bounce")
+	expect(GENE_WARPED in d.codes(0, "hand"), "DM not in the hand")
+	expect(lua_val(d, "Duel.GetFieldGroupCount(0,LOCATION_HAND,0)") == "1", "hand count")
+	play(d, [Phase("ep")], stop="idle", player=1)
+	play(d, [Phase("ep", player=1)], stop="idle", player=0)
+	n1 = len(d.messages)
+	play(d, [SummonFrom(GENE_WARPED, 0x02)])
+	expect(GENE_WARPED in d.codes(0, "mzone"), "DM not summoned from the hand")
+	expect(not lp_costs(d, n1) and not hints(d, HINT_DMZ_REMOVE, n1), "summon from the hand touched the DMZ")
+	return d
+
+
+@test
+def ultimate_offering_normal_summons_dm():
+	"""An effect that makes the player Normal Summon (Ultimate Offering) reaches the DM."""
+	d = domain_duel()
+	add_dm(d, SUMMONED_SKULL)
+	setup_lua(d, f"Debug.AddCard({ULTIMATE_OFFERING},0,0,LOCATION_SZONE,2,POS_FACEUP_ATTACK)\n" + mz(GENE_WARPED, 2))
+	d.add(GENE_WARPED, 0, "hand")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	play(d, [SummonFrom(GENE_WARPED, 0x02)])
+	expect(not dmz_entry(d, "summon", SUMMONED_SKULL), "Normal Summon not used up")
+	n0 = len(d.messages)
+	play(d, [Act(ULTIMATE_OFFERING), PickDMZ(SUMMONED_SKULL), Pick(GENE_WARPED)])
+	expect(SUMMONED_SKULL in d.codes(0, "mzone"), "Ultimate Offering did not Normal Summon the DM")
+	expect(lp_costs(d, n0) == [(0, 500)] and lp(d) == 7500, f"LP costs {lp_costs(d, n0)} (only Ultimate Offering's 500)")
+	expect(lua_val(d, "Duel.GetFieldGroupCount(0,LOCATION_EXTRA,0)") == "0", "Extra Deck count")
 	return d
 
 
