@@ -35,6 +35,7 @@ POS_FACEDOWN = 0x0A
 
 # cards
 FILLER = 89631139            # Blue-Eyes White Dragon (Level 8 Normal)
+EXCHANGE = 5556668           # Exchange
 GENE_WARPED = 69247929       # Gene-Warped Warwolf (Level 4 Normal)
 SUMMONED_SKULL = 70781052    # Level 6 Normal
 LINK_SPIDER = 98978921       # 1 Normal Monster
@@ -848,6 +849,26 @@ Duel.RegisterEffect(e,0)
 	expect(battle_step, "no Battle Step window")
 	expect(d.messages.index(pr[0]) < d.messages.index(battle_step[0]), "return offered only after the Battle Step window")
 	expect(in_dmz(d, GENE_WARPED), "DM not returned")
+	return d
+
+
+@test
+def dm_taken_to_opponent_hand_is_not_offered():
+	"""The DM moves from its owner's hand to the opponent's hand (Exchange): same zone type, so no return
+	is offered and it stays in the opponent's hand."""
+	d = domain_duel()
+	add_dm(d, GENE_WARPED)
+	setup_lua(d, f"Debug.AddCard({CED},1,1,LOCATION_SZONE,1,POS_FACEDOWN_DEFENSE)\n")
+	d.add(EXCHANGE, 1, "hand")
+	filler(d, 0); filler(d, 1)
+	begin(d)
+	play(d, [Summon(GENE_WARPED, "summon"), Act(CED, player=1), Pick(GENE_WARPED, player=1), Answer(False, desc=DESC_RETURN)])
+	expect(GENE_WARPED in d.codes(0, "hand"), "DM not bounced to the hand")
+	play(d, [Phase("ep")], stop="idle", player=1)
+	n1 = len(d.messages)
+	play(d, [Act(EXCHANGE, player=1), Pick(GENE_WARPED, player=1)], stop="idle", player=1)
+	expect(GENE_WARPED in d.codes(1, "hand"), "Exchange did not take the DM")
+	expect(not return_prompts(d, 0, n1), "return offered after a hand-to-hand move")
 	return d
 
 

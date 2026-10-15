@@ -194,8 +194,9 @@ void field::add_card(uint8_t playerid, card* pcard, uint8_t location, uint8_t se
 	}
 	}
 	pcard->current.pzone = pzone;
-	// Domain: the Deck Master changed zone type (moves on/within the field do not count)
-	if(location != 0 && pcard->is_deck_master()
+	// Domain: the Deck Master changed zone type (moves on/within the field, and moves
+	// between two zones of the same type such as one hand to another, do not count)
+	if(location != 0 && pcard->is_deck_master() && pcard->previous.location != location
 		&& !((pcard->previous.location & (LOCATION_ONFIELD | LOCATION_OVERLAY)) && (location & LOCATION_ONFIELD)))
 		player[pcard->owner].dm_moved = true;
 	pcard->apply_field_effect();
