@@ -12,6 +12,8 @@
 #include "fmt.h"
 
 namespace ygo {
+// Domain: outline and label of the Deck Master Zones
+static constexpr irr::u32 DECK_MASTER_ZONE_COLOR = 0xc0ffd400;
 void Game::DrawSelectionLine(const Materials::QuadVertex vec, bool strip, int width, irr::video::SColor color) {
 	driver->setMaterial(matManager.mOutLine);
 	if(strip && !gGameConfig->dotted_lines) {
@@ -89,6 +91,12 @@ void Game::DrawBackGround() {
 
 	//draw field
 	DrawTextureRect(matManager.vField, DrawFieldSpell() ? imageManager.tFieldTransparent[three_columns][tfield] : imageManager.tField[three_columns][tfield]);
+
+	//Domain: outline of the Deck Master Zones, not part of the field texture
+	if(dField.HasDeckMasterZone()) {
+		for(int p = 0; p < 2; ++p)
+			DrawSelectionLine(matManager.getDmz()[p], false, 2, DECK_MASTER_ZONE_COLOR);
+	}
 
 	driver->setMaterial(matManager.mBackLine);
 	//select field
@@ -191,6 +199,8 @@ void Game::DrawBackGround() {
 		vertex = matManager.getRemove()[dField.hovered_controler];
 	else if(dField.hovered_location == LOCATION_EXTRA)
 		vertex = matManager.getExtra()[dField.hovered_controler];
+	else if(dField.hovered_location == LOCATION_DMZ)
+		vertex = matManager.getDmz()[dField.hovered_controler];
 	if(!vertex)
 		return;
 	driver->setMaterial(matManager.mSelField);
@@ -346,6 +356,8 @@ void Game::DrawCards() {
 			DrawCard(pcard);
 		if(dField.skills[p])
 			DrawCard(dField.skills[p]);
+		if(dField.dmz[p])
+			DrawCard(dField.dmz[p]);
 	}
 }
 void Game::DrawCard(ClientCard* pcard) {
@@ -489,6 +501,8 @@ void Game::DrawMisc() {
 			drawact(matManager.getExtra()[p], dField.extra[p].size() * 0.01f + 0.02f);
 		if(dField.pzone_act[p])
 			drawact(matManager.getSzone()[p][dInfo.GetPzoneIndex(0)], 0.03f);
+		if(dField.dmz_act[p])
+			drawact(matManager.getDmz()[p], 0.03f);
 	}
 
 	if(dField.conti_act) {
@@ -643,6 +657,8 @@ void Game::DrawMisc() {
 			DrawStackIndicator(gDataManager->GetNumString(dField.grave[p].size()), matManager.getGrave()[p], (p == 1));
 		if (dField.remove[p].size())
 			DrawStackIndicator(gDataManager->GetNumString(dField.remove[p].size()), matManager.getRemove()[p], (p == 1));
+		if (!dField.dmz[p] && dField.HasDeckMasterZone())
+			DrawDeckMasterZoneLabel(matManager.getDmz()[p]);
 	}
 }
 /*
@@ -759,6 +775,28 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
 	auto coords = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition({ x0, y0, 0 });
 	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
 				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
+}
+/*
+Domain: draws the name of an empty Deck Master Zone inside it, on two lines if
+it does not fit
+*/
+void Game::DrawDeckMasterZoneLabel(const Materials::QuadVertex v) {
+	auto* collisionmanager = device->getSceneManager()->getSceneCollisionManager();
+	irr::core::recti rect(collisionmanager->getScreenCoordinatesFrom3DPosition(v[0].Pos),
+						  collisionmanager->getScreenCoordinatesFrom3DPosition(v[3].Pos));
+	rect.repair();
+	std::wstring text(gDataManager->HasSysString(7119) ? gDataManager->GetSysString(7119) : L"Deck Master Zone"sv);
+	if(static_cast<irr::s32>(adFont->getDimensionustring(text).Width) > rect.getWidth()) {
+		const auto middle = text.size() / 2;
+		const auto before = text.rfind(L' ', middle);
+		const auto after = text.find(L' ', middle);
+		auto split = before;
+		if(split == std::wstring::npos || (after != std::wstring::npos && after - middle < middle - before))
+			split = after;
+		if(split != std::wstring::npos)
+			text[split] = L'\n';
+	}
+	DrawShadowText(adFont, text, rect, Resize(1, 1, 1, 1), DECK_MASTER_ZONE_COLOR, 0xff000000, true, true);
 }
 void Game::DrawGUI() {
 	if(imageLoading.size()) {

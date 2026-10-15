@@ -45,6 +45,10 @@ public:
 	std::vector<ClientCard*> attackable_cards;
 	std::vector<ClientCard*> conti_cards;
 	ClientCard* skills[2];
+	// Domain: the Deck Master in each player's Deck Master Zone and how many
+	// times it was returned there (its summoning cost is 500 LP per return)
+	ClientCard* dmz[2];
+	uint32_t dmz_returns[2];
 	std::vector<std::pair<uint64_t, uint8_t>> activatable_descs;
 	std::vector<uint64_t> select_options;
 	std::vector<ChainInfo> chains;
@@ -81,6 +85,7 @@ public:
 	bool deck_act[2];
 	bool extra_act[2];
 	bool pzone_act[2];
+	bool dmz_act[2];
 	bool conti_act;
 	bool chain_forced;
 	ChainInfo current_chain;
@@ -95,6 +100,10 @@ public:
 	ClientCard* GetCard(uint8_t controler, uint8_t location, size_t sequence, size_t sub_seq = 0);
 	void AddCard(ClientCard* pcard, uint8_t controler, uint8_t location, uint32_t sequence);
 	ClientCard* RemoveCard(uint8_t controler, uint8_t location, uint32_t sequence);
+	void PutInDeckMasterZone(ClientCard* pcard, uint8_t controler);
+	ClientCard* TakeFromDeckMasterZone(uint8_t controler);
+	bool HasDeckMasterZone() const;
+	void ForgetCard(ClientCard* pcard);
 	void UpdateCard(uint8_t controler, uint8_t location, uint32_t sequence, const uint8_t* data, uint32_t len = 0);
 	void UpdateFieldCard(uint8_t controler, uint8_t location, const uint8_t* data, uint32_t len = 0);
 	void ClearCommandFlag();
@@ -155,5 +164,8 @@ public:
 }
 
 #define LOCATION_SKILL   0x400
+// Domain: client-only location of a card in the Deck Master Zone; the core
+// reports it as location 0, sequence DMZ_SEQUENCE
+#define LOCATION_DMZ     0x800
 
 #endif //CLIENT_FIELD_H

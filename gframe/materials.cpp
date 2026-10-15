@@ -162,6 +162,11 @@ Materials::Materials() {
 	SetS3DVertex(vSkillZone[0][1][1], 6.8f, -0.1f, 7.6f, -1.3f, 0, 1, 0, 0, 0, 0);
 	SetS3DVertex(vSkillZone[1][1][1], 7.7f, -0.1f, 6.9f, -1.3f, 0, 1, 0, 0, 0, 0);
 
+	//Domain: Deck Master Zone, the free column 0 slot of the Extra Monster Zone row
+	//for each player (5 columns field; the 3 columns field uses the skill zone)
+	SetS3DVertex(vFieldDmz[0], 1.2f, -0.6f, 2.3f, 0.6f, 0, 1, 0, 0, 0, 0);
+	SetS3DVertex(vFieldDmz[1], 6.7f, 0.6f, 5.6f, -0.6f, 0, 1, 0, 0, 0, 0);
+	vActiveDmz = &vFieldDmz;
 
 	for(irr::u16 i = 0; i < 40; ++i)
 		iArrow[i] = i;
@@ -237,6 +242,7 @@ void Materials::SetActiveVertices(int three_columns, int not_separate_pzones) {
 	vActiveGrave = &vFieldGrave[not_separate_pzones][three_columns];
 	vActiveRemove = &vFieldRemove[not_separate_pzones][three_columns];
 	vActiveSkill = &vSkillZone[not_separate_pzones][three_columns];
+	vActiveDmz = three_columns ? vActiveSkill : &vFieldDmz;
 }
 
 }

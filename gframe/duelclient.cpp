@@ -1314,6 +1314,131 @@ inline std::unique_lock<epro::mutex> LockIf() {
 		return std::unique_lock<epro::mutex>(mainGame->gMutex);
 	return std::unique_lock<epro::mutex>();
 }
+// Card of an entry of a command list. A card the client does not show gets a
+// temporary card, so that the entries keep their indexes for the response.
+static ClientCard* GetCommandCard(uint8_t con, uint8_t loc, uint32_t seq, uint32_t code) {
+	auto pcard = mainGame->dField.GetCard(con, loc, seq);
+	if(!pcard) {
+		pcard = new ClientCard{};
+		pcard->code = code;
+		pcard->controler = con;
+		pcard->sequence = static_cast<uint32_t>(mainGame->dField.limbo_temp.size());
+		mainGame->dField.limbo_temp.push_back(pcard);
+	}
+	return pcard;
+}
+// Domain: the Deck Master Zone is reported as (controler, 0, DMZ_SEQUENCE)
+inline bool IsDeckMasterZone(const CoreUtils::loc_info& info) {
+	return info.location == 0 && info.sequence == DMZ_SEQUENCE && info.controler < 2;
+}
+// Domain: a card leaves the Deck Master Zone, or is placed there. The card
+// keeps its materials, and it is shown face-up in the zone.
+static void MoveDeckMaster(uint32_t code, const CoreUtils::loc_info& previous, const CoreUtils::loc_info& current, std::unique_lock<epro::mutex>& lock) {
+	auto& field = mainGame->dField;
+	const bool catching_up = mainGame->dInfo.isCatchingUp;
+	const int frames = gGameConfig->quick_animation ? 12 : 20;
+	if(IsDeckMasterZone(previous) && field.dmz[previous.controler]) {
+		ClientCard* pcard = field.TakeFromDeckMasterZone(previous.controler);
+		if(code != 0 && pcard->code != code)
+			pcard->SetCode(code);
+		pcard->is_hovered = false;
+		pcard->is_highlighting = false;
+		if(IsDeckMasterZone(current)) {
+			field.PutInDeckMasterZone(pcard, current.controler);
+			if(!catching_up) {
+				field.MoveCard(pcard, 10);
+				mainGame->WaitFrameSignal(11, lock);
+			}
+			return;
+		}
+		if(current.location & LOCATION_OVERLAY) {
+			ClientCard* olcard = field.GetCard(current.controler, current.location & (~LOCATION_OVERLAY) & 0xff, current.sequence);
+			if(!olcard) {
+				field.ForgetCard(pcard);
+				delete pcard;
+				return;
+			}
+			olcard->overlayed.push_back(pcard);
+			field.overlay_cards.insert(pcard);
+			pcard->overlayTarget = olcard;
+			pcard->location = LOCATION_OVERLAY;
+			pcard->sequence = static_cast<uint32_t>(olcard->overlayed.size() - 1);
+			if(!catching_up) {
+				field.MoveCard(pcard, 10);
+				mainGame->WaitFrameSignal(11, lock);
+			}
+			return;
+		}
+		pcard->position = current.position;
+		field.AddCard(pcard, current.controler, current.location, current.sequence);
+		if(!catching_up) {
+			for(const auto& ocard : pcard->overlayed)
+				field.MoveCard(ocard, 10);
+			if(current.location == LOCATION_HAND) {
+				for(const auto& hcard : field.hand[current.controler])
+					field.MoveCard(hcard, 10);
+			} else
+				field.MoveCard(pcard, 10);
+			mainGame->WaitFrameSignal(11, lock);
+		}
+		return;
+	}
+	// into the Deck Master Zone
+	ClientCard* pcard = nullptr;
+	if(previous.location & LOCATION_OVERLAY) {
+		ClientCard* olcard = field.GetCard(previous.controler, previous.location & (~LOCATION_OVERLAY) & 0xff, previous.sequence);
+		if(olcard && previous.position < olcard->overlayed.size()) {
+			pcard = olcard->overlayed[previous.position];
+			olcard->overlayed.erase(olcard->overlayed.begin() + pcard->sequence);
+			pcard->overlayTarget = nullptr;
+			field.overlay_cards.erase(pcard);
+			for(size_t i = 0; i < olcard->overlayed.size(); ++i) {
+				olcard->overlayed[i]->sequence = static_cast<uint32_t>(i);
+				if(!catching_up)
+					field.MoveCard(olcard->overlayed[i], 2);
+			}
+		}
+	} else if(previous.location != 0) {
+		pcard = field.GetCard(previous.controler, previous.location, previous.sequence);
+		if(pcard) {
+			pcard->ClearTarget();
+			if(pcard->equipTarget) {
+				pcard->equipTarget->is_showequip = false;
+				pcard->equipTarget->equipped.erase(pcard);
+				pcard->equipTarget = nullptr;
+			}
+			for(const auto& eqcard : pcard->equipped)
+				eqcard->equipTarget = nullptr;
+			pcard->equipped.clear();
+			pcard->is_hovered = false;
+			pcard->is_showequip = false;
+			pcard->is_showtarget = false;
+			pcard->is_showchaintarget = false;
+			field.RemoveCard(previous.controler, previous.location, previous.sequence);
+		}
+	}
+	const bool is_new = !pcard;
+	if(is_new)
+		pcard = new ClientCard{};
+	if(code != 0 && pcard->code != code)
+		pcard->SetCode(code);
+	field.PutInDeckMasterZone(pcard, current.controler);
+	if(catching_up)
+		return;
+	if(is_new) {
+		pcard->UpdateDrawCoordinates(true);
+		pcard->curAlpha = 5;
+		field.FadeCard(pcard, 255, frames);
+		mainGame->WaitFrameSignal(frames, lock);
+		return;
+	}
+	field.MoveCard(pcard, 10);
+	if(previous.location == LOCATION_HAND) {
+		for(const auto& hcard : field.hand[previous.controler])
+			field.MoveCard(hcard, 10);
+	}
+	mainGame->WaitFrameSignal(11, lock);
+}
 int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 	auto& curMsg = mainGame->dInfo.curMsg;
 	auto PerformQueuedPanelConfirm = [&] {
@@ -1627,6 +1752,56 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			}
 			break;
 		}
+		case HINT_DMZ: {
+			// Domain: the player's Deck Master is (now) in the Deck Master Zone,
+			// returned there (data >> 32) times
+			if(player > 1)
+				break;
+			auto lock = LockIf();
+			auto& field = mainGame->dField;
+			field.dmz_returns[player] = static_cast<uint32_t>(data >> 32);
+			auto pcard = field.dmz[player];
+			if(pcard) {
+				pcard->SetCode(data & 0xffffffff);
+				break;
+			}
+			pcard = new ClientCard{};
+			pcard->owner = player;
+			pcard->SetCode(data & 0xffffffff);
+			field.PutInDeckMasterZone(pcard, player);
+			if(!mainGame->dInfo.isCatchingUp) {
+				pcard->UpdateDrawCoordinates(true);
+				pcard->curAlpha = 5;
+				int frames = 20;
+				if(gGameConfig->quick_animation)
+					frames = 12;
+				field.FadeCard(pcard, 255, frames);
+				mainGame->WaitFrameSignal(frames, lock);
+			}
+			break;
+		}
+		case HINT_DMZ_REMOVE: {
+			// Domain: the player's Deck Master left the Deck Master Zone; the
+			// MSG_MOVE that took it out normally already emptied the zone
+			if(player > 1)
+				break;
+			auto lock = LockIf();
+			auto& field = mainGame->dField;
+			auto pcard = field.dmz[player];
+			if(!pcard)
+				break;
+			if(!mainGame->dInfo.isCatchingUp) {
+				int frames = 20;
+				if(gGameConfig->quick_animation)
+					frames = 12;
+				field.FadeCard(pcard, 5, frames);
+				mainGame->WaitFrameSignal(frames, lock);
+			}
+			field.TakeFromDeckMasterZone(player);
+			field.ForgetCard(pcard);
+			delete pcard;
+			break;
+		}
 		}
 		break;
 	}
@@ -1776,18 +1951,20 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 					mainGame->dField.remove_act[pcard->controler] = true;
 				else if (pcard->location == LOCATION_EXTRA)
 					mainGame->dField.extra_act[pcard->controler] = true;
+				else if (pcard->location == LOCATION_DMZ)
+					mainGame->dField.dmz_act[pcard->controler] = true;
 			}
 		}
 		mainGame->dField.attackable_cards.clear();
 		//cards that can attack, will remain under 255
 		count = CompatRead<uint8_t, uint32_t>(pbuf);
 		for(uint32_t i = 0; i < count; ++i) {
-			/*code = */BufferIO::Read<uint32_t>(pbuf);
+			code = BufferIO::Read<uint32_t>(pbuf);
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = BufferIO::Read<uint8_t>(pbuf);
 			/*diratt = */BufferIO::Read<uint8_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.attackable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_ATTACK;
 		}
@@ -1820,9 +1997,11 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = CompatRead<uint8_t, uint32_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.summonable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_SUMMON;
+			if(pcard->location == LOCATION_DMZ)
+				mainGame->dField.dmz_act[pcard->controler] = true;
 		}
 		mainGame->dField.spsummonable_cards.clear();
 		//cards that can be special summoned, can be an arbitrary size
@@ -1832,7 +2011,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = CompatRead<uint8_t, uint32_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.spsummonable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_SPSUMMON;
 			switch(pcard->location) {
@@ -1854,6 +2033,9 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 					mainGame->dField.pzone_act[pcard->controler] = true;
 				break;
 			}
+			case LOCATION_DMZ:
+				mainGame->dField.dmz_act[pcard->controler] = true;
+				break;
 			default: break;
 			}
 		}
@@ -1865,7 +2047,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = BufferIO::Read<uint8_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.reposable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_REPOS;
 		}
@@ -1877,9 +2059,11 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = CompatRead<uint8_t, uint32_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.msetable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_MSET;
+			if(pcard->location == LOCATION_DMZ)
+				mainGame->dField.dmz_act[pcard->controler] = true;
 		}
 		mainGame->dField.ssetable_cards.clear();
 		//cards that can be set in the szone, can be an arbitrary size
@@ -1889,7 +2073,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			con = mainGame->LocalPlayer(BufferIO::Read<uint8_t>(pbuf));
 			loc = BufferIO::Read<uint8_t>(pbuf);
 			seq = CompatRead<uint8_t, uint32_t>(pbuf);
-			pcard = mainGame->dField.GetCard(con, loc, seq);
+			pcard = GetCommandCard(con, loc, seq, code);
 			mainGame->dField.ssetable_cards.push_back(pcard);
 			pcard->cmdFlag |= COMMAND_SSET;
 		}
@@ -1933,6 +2117,8 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 					mainGame->dField.remove_act[pcard->controler] = true;
 				else if (pcard->location == LOCATION_EXTRA)
 					mainGame->dField.extra_act[pcard->controler] = true;
+				else if (pcard->location == LOCATION_DMZ)
+					mainGame->dField.dmz_act[pcard->controler] = true;
 			}
 		}
 		std::lock_guard<epro::mutex> lock(mainGame->gMutex);
@@ -1969,14 +2155,18 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			text = epro::format(L"{}\n{}\n{}", event_string,
 							   epro::sprintf(gDataManager->GetSysString(221), gDataManager->GetName(code), gDataManager->FormatLocation(info.location, info.sequence)),
 							   gDataManager->GetSysString(223));
+		} else if(desc == 7112 && !mainGame->dInfo.compat_mode && !gDataManager->HasSysString(7112)) {
+			// Domain: return the Deck Master to the Deck Master Zone
+			text = L"Return your Deck Master to the Deck Master Zone?";
 		} else {
 			text = epro::sprintf(gDataManager->GetDesc(desc, mainGame->dInfo.compat_mode), gDataManager->GetName(code));
 		}
 		std::lock_guard<epro::mutex> lock(mainGame->gMutex);
 		ClientCard* pcard = mainGame->dField.GetCard(info.controler, info.location, info.sequence);
-		if (pcard->code != code)
-			pcard->SetCode(code);
-		if(info.location != LOCATION_DECK) {
+		// the client does not know which card of the Deck it is
+		if(pcard && info.location != LOCATION_DECK) {
+			if(pcard->code != code)
+				pcard->SetCode(code);
 			pcard->is_highlighting = true;
 			mainGame->dField.highlighting_card = pcard;
 		}
@@ -2207,6 +2397,8 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 					mainGame->dField.remove_act[pcard->controler] = true;
 				else if(info.location == LOCATION_EXTRA)
 					mainGame->dField.extra_act[pcard->controler] = true;
+				else if(pcard->location == LOCATION_DMZ)
+					mainGame->dField.dmz_act[pcard->controler] = true;
 				else if(info.location == LOCATION_OVERLAY)
 					panelmode = true;
 			}
@@ -3087,6 +3279,11 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 				Play(SoundManager::SFX::BANISHED);
 		}
 		auto lock = LockIf();
+		// Domain: into or out of the Deck Master Zone
+		if((IsDeckMasterZone(previous) && mainGame->dField.dmz[previous.controler]) || IsDeckMasterZone(current)) {
+			MoveDeckMaster(code, previous, current, lock);
+			return true;
+		}
 		if (previous.location == 0) {
 			ClientCard* pcard = new ClientCard{};
 			pcard->position = current.position;
@@ -3197,7 +3394,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 				pcard->overlayTarget = olcard;
 				pcard->location = LOCATION_OVERLAY;
 				pcard->sequence = static_cast<uint32_t>(olcard->overlayed.size() - 1);
-				if(!mainGame->dInfo.isCatchingUp && (olcard->location & LOCATION_ONFIELD)) {
+				if(!mainGame->dInfo.isCatchingUp && (olcard->location & (LOCATION_ONFIELD | LOCATION_DMZ))) {
 					mainGame->dField.MoveCard(pcard, 10);
 					if(previous.location == LOCATION_HAND)
 						for(const auto& hcard : mainGame->dField.hand[previous.controler])
@@ -4308,6 +4505,14 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 	}
 	case MSG_RELOAD_FIELD: {
 		auto lock = LockIf();
+		// Domain: the reloaded field does not include the Deck Master Zone,
+		// which stays as it was
+		ClientCard* dmz_cards[2]{ mainGame->dField.TakeFromDeckMasterZone(0), mainGame->dField.TakeFromDeckMasterZone(1) };
+		const uint32_t dmz_returns[2]{ mainGame->dField.dmz_returns[0], mainGame->dField.dmz_returns[1] };
+		for(auto& pcard : dmz_cards) {
+			if(pcard)
+				mainGame->dField.ForgetCard(pcard);
+		}
 		mainGame->dField.Clear();
 		if(mainGame->dInfo.compat_mode) {
 			uint8_t field = BufferIO::Read<uint8_t>(pbuf) & 0xf;
@@ -4323,7 +4528,8 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 		} else {
 			uint32_t opts = BufferIO::Read<uint32_t>(pbuf);
 			mainGame->dInfo.duel_field = mainGame->GetMasterRule(opts);
-			mainGame->dInfo.duel_params = opts;
+			// only the low word is sent, keep the high one (DUEL_DOMAIN...)
+			mainGame->dInfo.duel_params = opts | (mainGame->dInfo.duel_params & 0xffffffff00000000ULL);
 		}
 		matManager.SetActiveVertices(mainGame->dInfo.HasFieldFlag(DUEL_3_COLUMNS_FIELD),
 									 !mainGame->dInfo.HasFieldFlag(DUEL_SEPARATE_PZONE));
@@ -4385,6 +4591,11 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
 			mainGame->dField.extra_p_count[p] = CompatRead<uint8_t, uint32_t>(pbuf);
 		}
 		mainGame->dInfo.startlp = std::max(mainGame->dInfo.lp[0], mainGame->dInfo.lp[1]);
+		for(int p = 0; p < 2; ++p) {
+			if(dmz_cards[p])
+				mainGame->dField.PutInDeckMasterZone(dmz_cards[p], p);
+			mainGame->dField.dmz_returns[p] = dmz_returns[p];
+		}
 		mainGame->dField.RefreshAllCards();
 		const auto solving_chains = CompatRead<uint8_t, uint32_t>(pbuf);
 		if(solving_chains > 0) {
@@ -4446,10 +4657,11 @@ void DuelClient::SendResponse() {
 	switch(msg) {
 	case MSG_SELECT_BATTLECMD:
 	case MSG_SELECT_IDLECMD: {
+		// the command lists can hold the temporary cards
+		mainGame->dField.ClearCommandFlag();
 		for(auto& pcard : mainGame->dField.limbo_temp)
 			delete pcard;
 		mainGame->dField.limbo_temp.clear();
-		mainGame->dField.ClearCommandFlag();
 		if(gGameConfig->alternative_phase_layout) {
 			mainGame->btnBP->setEnabled(false);
 			mainGame->btnM2->setEnabled(false);
