@@ -12,6 +12,8 @@
 #include "fmt.h"
 
 namespace ygo {
+// Domain: outline and label of the Deck Master Zones
+static constexpr irr::u32 DECK_MASTER_ZONE_COLOR = 0xc0ffd400;
 void Game::DrawSelectionLine(const Materials::QuadVertex vec, bool strip, int width, irr::video::SColor color) {
 	driver->setMaterial(matManager.mOutLine);
 	if(strip && !gGameConfig->dotted_lines) {
@@ -89,6 +91,12 @@ void Game::DrawBackGround() {
 
 	//draw field
 	DrawTextureRect(matManager.vField, DrawFieldSpell() ? imageManager.tFieldTransparent[three_columns][tfield] : imageManager.tField[three_columns][tfield]);
+
+	//Domain: outline of the Deck Master Zones, not part of the field texture
+	if(dField.HasDeckMasterZone()) {
+		for(int p = 0; p < 2; ++p)
+			DrawSelectionLine(matManager.getDmz()[p], false, 2, DECK_MASTER_ZONE_COLOR);
+	}
 
 	driver->setMaterial(matManager.mBackLine);
 	//select field
@@ -191,6 +199,8 @@ void Game::DrawBackGround() {
 		vertex = matManager.getRemove()[dField.hovered_controler];
 	else if(dField.hovered_location == LOCATION_EXTRA)
 		vertex = matManager.getExtra()[dField.hovered_controler];
+	else if(dField.hovered_location == LOCATION_DMZ)
+		vertex = matManager.getDmz()[dField.hovered_controler];
 	if(!vertex)
 		return;
 	driver->setMaterial(matManager.mSelField);
@@ -346,6 +356,8 @@ void Game::DrawCards() {
 			DrawCard(pcard);
 		if(dField.skills[p])
 			DrawCard(dField.skills[p]);
+		if(dField.dmz[p])
+			DrawCard(dField.dmz[p]);
 	}
 }
 void Game::DrawCard(ClientCard* pcard) {
@@ -489,6 +501,8 @@ void Game::DrawMisc() {
 			drawact(matManager.getExtra()[p], dField.extra[p].size() * 0.01f + 0.02f);
 		if(dField.pzone_act[p])
 			drawact(matManager.getSzone()[p][dInfo.GetPzoneIndex(0)], 0.03f);
+		if(dField.dmz_act[p])
+			drawact(matManager.getDmz()[p], 0.03f);
 	}
 
 	if(dField.conti_act) {
@@ -643,6 +657,8 @@ void Game::DrawMisc() {
 			DrawStackIndicator(gDataManager->GetNumString(dField.grave[p].size()), matManager.getGrave()[p], (p == 1));
 		if (dField.remove[p].size())
 			DrawStackIndicator(gDataManager->GetNumString(dField.remove[p].size()), matManager.getRemove()[p], (p == 1));
+		if (!dField.dmz[p] && dField.HasDeckMasterZone())
+			DrawDeckMasterZoneLabel(matManager.getDmz()[p]);
 	}
 }
 /*
@@ -759,6 +775,28 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
 	auto coords = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition({ x0, y0, 0 });
 	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
 				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
+}
+/*
+Domain: draws the name of an empty Deck Master Zone inside it, on two lines if
+it does not fit
+*/
+void Game::DrawDeckMasterZoneLabel(const Materials::QuadVertex v) {
+	auto* collisionmanager = device->getSceneManager()->getSceneCollisionManager();
+	irr::core::recti rect(collisionmanager->getScreenCoordinatesFrom3DPosition(v[0].Pos),
+						  collisionmanager->getScreenCoordinatesFrom3DPosition(v[3].Pos));
+	rect.repair();
+	std::wstring text(gDataManager->HasSysString(7119) ? gDataManager->GetSysString(7119) : L"Deck Master Zone"sv);
+	if(static_cast<irr::s32>(adFont->getDimensionustring(text).Width) > rect.getWidth()) {
+		const auto middle = text.size() / 2;
+		const auto before = text.rfind(L' ', middle);
+		const auto after = text.find(L' ', middle);
+		auto split = before;
+		if(split == std::wstring::npos || (after != std::wstring::npos && after - middle < middle - before))
+			split = after;
+		if(split != std::wstring::npos)
+			text[split] = L'\n';
+	}
+	DrawShadowText(adFont, text, rect, Resize(1, 1, 1, 1), DECK_MASTER_ZONE_COLOR, 0xff000000, true, true);
 }
 void Game::DrawGUI() {
 	if(imageLoading.size()) {
@@ -1184,6 +1222,11 @@ bool Game::IsGenesysActive() const {
 }
 // Red ring badge with the card's Genesys points in yellow, as in the official
 // point list.
+bool Game::IsDomainActive() const {
+	if(is_siding)
+		return dInfo.duel_params & DUEL_DOMAIN;
+	return chkDomain && chkDomain->isChecked() && deckBuilder.filterList && deckBuilder.filterList->domain;
+}
 void Game::DrawGenesysBadge(uint32_t points, const irr::core::recti& rect, const irr::core::recti* cliprect) {
 	if(imageManager.tGenesys) {
 		const auto size = imageManager.tGenesys->getOriginalSize();
@@ -1277,6 +1320,13 @@ void Game::DrawDeckBd() {
 		return epro::to_wstring(deck.size());
 	};
 	const auto& current_deck = deckBuilder.GetCurrentDeck();
+	const bool domain = IsDomainActive();
+	// Domain: cards outside the Deck Master's domain get a red tint.
+	const auto DrawOutOfDomain = [&](const CardDataC* card, irr::core::vector2di pos) {
+		if(!domain || is_siding || !current_deck.master || deckBuilder.IsInCurrentDomain(card))
+			return;
+		driver->draw2DRectangle(0x80ff0000, Resize(pos.X, pos.Y, pos.X + CARD_THUMB_WIDTH, pos.Y + CARD_THUMB_HEIGHT));
+	};
 
 	//main deck
 	{
@@ -1285,7 +1335,10 @@ void Game::DrawDeckBd() {
 
 		DrawShadowText(textFont, gDataManager->GetSysString(1330), Resize(314, 136, 409, 156), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
 
-		const auto main_deck_size_str = GetDeckSizeStr(current_deck.main, gdeckManager->pre_deck.main);
+		auto main_deck_size_str = GetDeckSizeStr(current_deck.main, gdeckManager->pre_deck.main);
+		// Domain: the Main Deck has exactly 60 cards.
+		if(domain && !is_siding)
+			main_deck_size_str = epro::format(L"{}/60", current_deck.main.size());
 		DrawShadowText(numFont, main_deck_size_str, Resize(379, 137, 439, 157), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
 
 		// Genesys: total points of Main + Extra + Side against the list's cap.
@@ -1317,7 +1370,9 @@ void Game::DrawDeckBd() {
 		const float dx = 436.0f / (cards_per_row - 1);
 
 		for(int i = 0; i < static_cast<int>(current_deck.main.size()); ++i) {
-			DrawThumb(current_deck.main[i], irr::core::vector2di(314 + (i % cards_per_row) * dx, 164 + (i / cards_per_row) * 68), deckBuilder.filterList);
+			const irr::core::vector2di thumbpos(314 + (i % cards_per_row) * dx, 164 + (i / cards_per_row) * 68);
+			DrawThumb(current_deck.main[i], thumbpos, deckBuilder.filterList);
+			DrawOutOfDomain(current_deck.main[i], thumbpos);
 			if(deckBuilder.hovered_pos == 1 && deckBuilder.hovered_seq == i)
 				driver->draw2DRectangleOutline(Resize(313 + (i % cards_per_row) * dx, 163 + (i / cards_per_row) * 68, 359 + (i % cards_per_row) * dx, 228 + (i / cards_per_row) * 68), skin::DECK_WINDOW_HOVERED_CARD_OUTLINE_VAL);
 		}
@@ -1353,10 +1408,52 @@ void Game::DrawDeckBd() {
 
 		for(size_t i = 0; i < current_deck.extra.size(); ++i) {
 			DrawThumb(current_deck.extra[i], irr::core::vector2di(314 + i * dx, 466), deckBuilder.filterList);
+			DrawOutOfDomain(current_deck.extra[i], irr::core::vector2di(314 + i * dx, 466));
 			if(deckBuilder.hovered_pos == 2 && deckBuilder.hovered_seq == (int)i)
 				driver->draw2DRectangleOutline(Resize(313 + i * dx, 465, 359 + i * dx, 531), skin::DECK_WINDOW_HOVERED_CARD_OUTLINE_VAL);
 		}
 	}
+	//Domain: Deck Master pane in place of the side deck
+	if(domain) {
+		DRAWRECT(SIDE_INFO, 310, 537, 797, 557);
+		DRAWOUTLINE(SIDE_INFO, 309, 536, 797, 557);
+
+		const auto label = gDataManager->HasSysString(7110) ? gDataManager->GetSysString(7110) : L"Deck Master"sv;
+		const auto labelsize = textFont->getDimensionustring(label);
+		DrawShadowText(textFont, label, Resize(314, 536, 600, 556), Resize(1, 1, 1, 1), 0xffffffff, 0xff000000, false, true);
+		if(current_deck.master) {
+			const auto pos = irr::core::recti(ResizeX(314) + labelsize.Width + ResizeX(10), ResizeY(536), ResizeX(700), ResizeY(556));
+			DrawShadowText(textFont, gDataManager->GetName(current_deck.master->getRealCode()), pos, Resize(1, 1, 1, 1), 0xffffd400, 0xff000000, false, true);
+		}
+		// Side Deck cards are not allowed in Domain: shown in red so they can
+		// be moved out.
+		if(!current_deck.side.empty()) {
+			const auto side_str = epro::format(L"{} {}", gDataManager->GetSysString(1332), current_deck.side.size());
+			const auto sidepos = Resize(310, 537, 797, 557);
+			const auto sidesize = textFont->getDimensionustring(side_str);
+			const auto pos = irr::core::recti(sidepos.LowerRightCorner.X - sidesize.Width - 5, sidepos.UpperLeftCorner.Y,
+											  sidepos.LowerRightCorner.X, sidepos.LowerRightCorner.Y);
+			DrawShadowText(textFont, side_str, pos, irr::core::recti{ 1, 1, 1, 1 }, 0xffff4040, 0xff000000, false, true);
+		}
+		DRAWRECT(SIDE, 310, 560, 797, 630);
+		DRAWOUTLINE(SIDE, 309, 559, 797, 630);
+
+		if(current_deck.master) {
+			DrawThumb(current_deck.master, irr::core::vector2di(314, 564), deckBuilder.filterList);
+			if(deckBuilder.hovered_pos == 5)
+				driver->draw2DRectangleOutline(Resize(313, 563, 359, 629), skin::DECK_WINDOW_HOVERED_CARD_OUTLINE_VAL);
+		} else {
+			driver->draw2DRectangleOutline(Resize(313, 563, 359, 629), deckBuilder.hovered_pos == 5 ? skin::DECK_WINDOW_HOVERED_CARD_OUTLINE_VAL : irr::video::SColor(0xff808080));
+		}
+		const float dx = DomainSideStep(current_deck.side.size());
+		for(size_t i = 0; i < current_deck.side.size(); ++i) {
+			const irr::core::vector2di thumbpos(DOMAIN_SIDE_X + i * dx, 564);
+			DrawThumb(current_deck.side[i], thumbpos, deckBuilder.filterList);
+			driver->draw2DRectangle(0x80ff0000, Resize(thumbpos.X, thumbpos.Y, thumbpos.X + CARD_THUMB_WIDTH, thumbpos.Y + CARD_THUMB_HEIGHT));
+			if(deckBuilder.hovered_pos == 3 && deckBuilder.hovered_seq == (int)i)
+				driver->draw2DRectangleOutline(Resize(thumbpos.X - 1, 563, thumbpos.X + 45, 629), skin::DECK_WINDOW_HOVERED_CARD_OUTLINE_VAL);
+		}
+	} else
 	//side deck
 	{
 		DRAWRECT(SIDE_INFO, 310, 537, 797, 557);

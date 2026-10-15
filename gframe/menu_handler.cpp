@@ -36,7 +36,8 @@ static void UpdateDeck() {
 	const auto& deck = mainGame->deckBuilder.GetCurrentDeck();
 	uint8_t deckbuf[0xf000];
 	auto* pdeck = deckbuf;
-	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
+	// counts, cards and the Deck Master trailer
+	static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 4;
 	const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
 	if(totsize > max_deck_size)
 		return;
@@ -48,6 +49,10 @@ static void UpdateDeck() {
 		BufferIO::Write<uint32_t>(pdeck, pcard->code);
 	for(const auto& pcard : deck.side)
 		BufferIO::Write<uint32_t>(pdeck, pcard->code);
+	if(deck.master) {
+		BufferIO::Write<uint32_t>(pdeck, DECK_MASTER_TRAILER);
+		BufferIO::Write<uint32_t>(pdeck, deck.master->code);
+	}
 	DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
 	gdeckManager->sent_deck = mainGame->deckBuilder.GetCurrentDeck();
 }
@@ -221,7 +226,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					mainGame->ebHostPort->setVisible(true);
 					mainGame->stHostNotes->setVisible(false);
 					mainGame->ebHostNotes->setVisible(false);
-					mainGame->ApplyGenesysHostRules();
+					mainGame->ApplyFormatHostRules();
 					mainGame->ShowElement(mainGame->wCreateHost);
 				}
 				break;
@@ -235,7 +240,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				mainGame->ebHostPort->setVisible(false);
 				mainGame->stHostNotes->setVisible(true);
 				mainGame->ebHostNotes->setVisible(true);
-				mainGame->ApplyGenesysHostRules();
+				mainGame->ApplyFormatHostRules();
 				mainGame->ShowElement(mainGame->wCreateHost);
 				break;
 			}
@@ -470,7 +475,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					break;
 				const auto replay_name = Utils::GetFileName(ReplayMode::cur_replay.GetReplayName());
 				for(size_t i = 0; i < decks.size(); i++) {
-					DeckManager::SaveDeck(epro::format(EPRO_TEXT("{} player{:02} {}"), replay_name, i, sanitize(Utils::ToPathString(players[i]))), decks[i].main_deck, decks[i].extra_deck, cardlist_type());
+					DeckManager::SaveDeck(epro::format(EPRO_TEXT("{} player{:02} {}"), replay_name, i, sanitize(Utils::ToPathString(players[i]))), decks[i].main_deck, decks[i].extra_deck, cardlist_type(), decks[i].master);
 				}
 				mainGame->stACMessage->setText(gDataManager->GetSysString(1367).data());
 				mainGame->PopupElement(mainGame->wACMessage, 20);
@@ -940,6 +945,11 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 						mainGame->forbiddentypes = DUEL_MODE_GENESYS_FORB;
 						break;
 					}
+					case 9:	{
+						mainGame->duel_param = DUEL_MODE_DOMAIN;
+						mainGame->forbiddentypes = DUEL_MODE_DOMAIN_FORB;
+						break;
+					}
 					}
 	#undef CHECK
 					mainGame->duel_param |= tcg;
@@ -983,6 +993,7 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				static constexpr DeckSizes rush_deck_sizes{ {40,60}, {0,15}, {0,15} };
 				static constexpr DeckSizes speed_deck_sizes{ {20,30}, {0,6}, {0,6} };
 				static constexpr DeckSizes goat_deck_sizes{ {40,60}, {0,999}, {0,15} };
+				static constexpr DeckSizes domain_deck_sizes{ {60,60}, {0,15}, {0,0} };
 				mainGame->chkTcgRulings->setChecked(false);
 				auto combobox = static_cast<irr::gui::IGUIComboBox*>(event.GUIEvent.Caller);
 #define CHECK(MR) case (MR - 1): { mainGame->duel_param = DUEL_MODE_MR##MR; mainGame->forbiddentypes = DUEL_MODE_MR##MR##_FORB;\
@@ -1022,9 +1033,16 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 					mainGame->ebStartHand->setText(L"5");
 					goto remove;
 				}
+				case 9:	{
+					mainGame->duel_param = DUEL_MODE_DOMAIN;
+					setDeckSizes(domain_deck_sizes);
+					mainGame->forbiddentypes = DUEL_MODE_DOMAIN_FORB;
+					mainGame->ebStartHand->setText(L"5");
+					goto remove;
+				}
 				default: break;
 				remove:
-				combobox->removeItem(9);
+				combobox->removeItem(10);
 				mainGame->UpdateExtraRules();
 				}
 #undef CHECK
@@ -1047,11 +1065,14 @@ bool MenuHandler::OnEvent(const irr::SEvent& event) {
 				static constexpr uint32_t limits[]{ TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 				for(auto i = 0u; i < sizeofarr(mainGame->chkTypeLimit); ++i)
 					mainGame->chkTypeLimit[i]->setChecked(mainGame->forbiddentypes & limits[i]);
-				mainGame->LockGenesysZones(combobox == mainGame->cbDuelRule && combobox->getSelected() == 8);
+				if(combobox == mainGame->cbDuelRule)
+					mainGame->ApplyFormatHostRules(true);
+				else
+					mainGame->LockGenesysZones(false);
 				break;
 			}
 			case COMBOBOX_HOST_LFLIST: {
-				mainGame->ApplyGenesysHostRules();
+				mainGame->ApplyFormatHostRules();
 				break;
 			}
 			case COMBOBOX_BOT_DECK: {

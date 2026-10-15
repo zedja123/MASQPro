@@ -554,8 +554,11 @@ void Game::Initialize() {
 	defaultStrings.emplace_back(stBanlist, 1300);
 	cbDBLFList = AlignElementWithParent(AddComboBox(env, Scale(80, 5, 220, 30), wDeckEdit, COMBOBOX_DBLFLIST));
 	cbDBLFList->setMaxSelectionRows(10);
-	chkGenesys = AlignElementWithParent(env->addCheckBox(gGameConfig->genesysPoints, Scale(225, 7, 295, 28), wDeckEdit, CHECKBOX_GENESYS_POINTS,
+	chkGenesys = AlignElementWithParent(env->addCheckBox(gGameConfig->genesysPoints, Scale(225, 0, 295, 17), wDeckEdit, CHECKBOX_GENESYS_POINTS,
 		gDataManager->HasSysString(7101) ? gDataManager->GetSysString(7101).data() : L"Genesys"));
+	// Domain: the Side Deck row becomes the Deck Master pane.
+	chkDomain = AlignElementWithParent(env->addCheckBox(gGameConfig->domainMode, Scale(225, 17, 295, 34), wDeckEdit, CHECKBOX_DOMAIN,
+		gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111).data() : L"Domain"));
 	stDeck = env->addStaticText(gDataManager->GetSysString(1301).data(), Scale(10, 39, 100, 59), false, false, wDeckEdit);
 	defaultStrings.emplace_back(stDeck, 1301);
 	cbDBDecks = AlignElementWithParent(AddComboBox(env, Scale(80, 35, 220, 60), wDeckEdit, COMBOBOX_DBDECKS));
@@ -2597,6 +2600,7 @@ void Game::SaveConfig() {
 	gGameConfig->chkHideHintButton = gSettings.chkHideChainButtons->isChecked();
 	gGameConfig->chkAnime = chkAnime->isChecked();
 	gGameConfig->genesysPoints = chkGenesys->isChecked();
+	gGameConfig->domainMode = chkDomain->isChecked();
 #ifdef UPDATE_URL
 	gGameConfig->noClientUpdates = gSettings.chkUpdates->isChecked();
 #endif
@@ -3118,6 +3122,10 @@ void Game::UpdateDuelParam() {
 				flag |= 0x100ULL << i;
 		}
 	}
+	// Domain is not a custom rule checkbox: keep it while the other options
+	// still are the Domain ones.
+	if((duel_param & DUEL_DOMAIN) && (flag & ~DUEL_TCG_SEGOC_NONPUBLIC) == DUEL_MODE_MR5)
+		flag |= DUEL_DOMAIN;
 	constexpr uint32_t limits[] = { TYPE_FUSION, TYPE_SYNCHRO, TYPE_XYZ, TYPE_PENDULUM, TYPE_LINK };
 	uint32_t flag2 = 0;
 	for (auto i = 0u; i < sizeofarr(chkTypeLimit); ++i) {
@@ -3129,7 +3137,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_SPEED: {
 		cbDuelRule->setSelected(5);
 		if(flag2 == DUEL_MODE_MR5_FORB) {
-			cbDuelRule->removeItem(9);
+			cbDuelRule->removeItem(10);
 			break;
 		}
 	}
@@ -3137,7 +3145,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_RUSH: {
 		cbDuelRule->setSelected(6);
 		if(flag2 == DUEL_MODE_MR5_FORB) {
-			cbDuelRule->removeItem(9);
+			cbDuelRule->removeItem(10);
 			break;
 		}
 	}
@@ -3145,7 +3153,7 @@ void Game::UpdateDuelParam() {
 	case DUEL_MODE_GOAT: {
 		cbDuelRule->setSelected(7);
 		if(flag2 == DUEL_MODE_MR1_FORB) {
-			cbDuelRule->removeItem(9);
+			cbDuelRule->removeItem(10);
 			break;
 		}
 	}
@@ -3156,7 +3164,7 @@ void Game::UpdateDuelParam() {
 		case DUEL_MODE_MR##MR:{ \
 			cbDuelRule->setSelected(MR - 1); \
 			if (flag2 == DUEL_MODE_MR##MR##_FORB) { \
-				cbDuelRule->removeItem(9); break; } \
+				cbDuelRule->removeItem(10); break; } \
 			} \
 			[[fallthrough]];
 			CHECK(1)
@@ -3168,14 +3176,24 @@ void Game::UpdateDuelParam() {
 		case DUEL_MODE_GENESYS: {
 			cbDuelRule->setSelected(8);
 			if(flag2 == DUEL_MODE_GENESYS_FORB) {
-				cbDuelRule->removeItem(9);
+				cbDuelRule->removeItem(10);
 				break;
+			}
+		}
+		[[fallthrough]];
+		case DUEL_MODE_DOMAIN: {
+			if((flag & ~DUEL_TCG_SEGOC_NONPUBLIC) == DUEL_MODE_DOMAIN) {
+				cbDuelRule->setSelected(9);
+				if(flag2 == DUEL_MODE_DOMAIN_FORB) {
+					cbDuelRule->removeItem(10);
+					break;
+				}
 			}
 		}
 		[[fallthrough]];
 		default: {
 			cbDuelRule->addItem(gDataManager->GetSysString(1630).data());
-			cbDuelRule->setSelected(9);
+			cbDuelRule->setSelected(10);
 			break;
 		}
 		}
@@ -3184,15 +3202,38 @@ void Game::UpdateDuelParam() {
 	duel_param = flag;
 	forbiddentypes = flag2;
 }
-// A Genesys banlist forces the Genesys rule: original field layout without
-// Pendulum Zones or Extra Monster Zones. The rule selector and those zone
-// options are locked while such a list is selected.
-void Game::ApplyGenesysHostRules() {
-	const auto sel = cbHostLFList->getSelected();
-	const auto* list = sel >= 0 ? gdeckManager->GetLFList(cbHostLFList->getItemData(sel)) : nullptr;
+// A Genesys banlist forces the Genesys rule (original field layout without
+// Pendulum Zones or Extra Monster Zones) and a Domain banlist the Domain rule.
+// The rule selector and the options fixed by the rule are locked while such a
+// list is selected. The Domain rule only exists with a Domain list: choosing
+// it selects one, leaving the list leaves the rule.
+void Game::ApplyFormatHostRules(bool rule_changed) {
+	const auto FindList = [this]() -> const LFList* {
+		const auto sel = cbHostLFList->getSelected();
+		return sel >= 0 ? gdeckManager->GetLFList(cbHostLFList->getItemData(sel)) : nullptr;
+	};
+	if(rule_changed && cbDuelRule->getSelected() == 9) {
+		const auto* list = FindList();
+		for(irr::u32 i = 0; (!list || !list->domain) && i < cbHostLFList->getItemCount(); ++i) {
+			const auto* candidate = gdeckManager->GetLFList(cbHostLFList->getItemData(i));
+			if(candidate && candidate->domain) {
+				cbHostLFList->setSelected(i);
+				list = candidate;
+			}
+		}
+	}
+	const auto* list = FindList();
 	const bool genesys = list && list->genesys;
-	if(genesys && cbDuelRule->getSelected() != 8) {
-		cbDuelRule->setSelected(8);
+	const bool domain = list && list->domain;
+	int rule = -1;
+	if(genesys)
+		rule = 8;
+	else if(domain)
+		rule = 9;
+	else if(cbDuelRule->getSelected() == 9)
+		rule = 4;
+	if(rule >= 0 && cbDuelRule->getSelected() != rule) {
+		cbDuelRule->setSelected(rule);
 		irr::SEvent event{};
 		event.EventType = irr::EET_GUI_EVENT;
 		event.GUIEvent.Caller = cbDuelRule;
@@ -3200,11 +3241,33 @@ void Game::ApplyGenesysHostRules() {
 		event.GUIEvent.EventType = irr::gui::EGET_COMBO_BOX_CHANGED;
 		menuHandler.OnEvent(event);
 	}
-	cbDuelRule->setEnabled(!genesys);
-	LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
+	cbDuelRule->setEnabled(!genesys && !domain);
+	// Domain: the field, card types and deck sizes are those of the rule.
+	for(auto* chk : chkCustomRules)
+		chk->setEnabled(!domain);
+	for(auto* chk : chkTypeLimit)
+		chk->setEnabled(!domain);
+	for(auto* eb : { ebMainMin, ebMainMax, ebExtraMin, ebExtraMax, ebSideMin, ebSideMax })
+		eb->setEnabled(!domain);
+	// Domain: no extra rules (the host clears them too).
+	if(domain) {
+		for(auto* chk : chkRules) {
+			chk->setChecked(false);
+			chk->setEnabled(false);
+		}
+		extra_rules = 0;
+	} else if(!chkRules[2]->isEnabled()) {
+		// unlocked after a Domain list
+		UpdateExtraRules();
+	}
+	if(!domain)
+		LockGenesysZones(genesys || cbDuelRule->getSelected() == 8);
 }
 int Game::BotRuleFilter() const {
 	const auto sel = cbDuelRule->getSelected();
+	// No bot plays Domain: use a filter value no bot lists.
+	if(sel == 9)
+		return 99;
 	return sel == 8 ? 5 : sel + 1;
 }
 void Game::LockGenesysZones(bool lock) {
@@ -3497,6 +3560,9 @@ void Game::ReloadCBLimit() {
 	if(deckBuilder.filterList && deckBuilder.filterList->genesys)
 		cbLimit->addItem(gDataManager->HasSysString(7104) ? gDataManager->GetSysString(7104).data() : L"Genesys points",
 						 DeckBuilder::LIMITATION_FILTER_GENESYS_POINTS);
+	if(deckBuilder.filterList && deckBuilder.filterList->domain)
+		cbLimit->addItem(gDataManager->HasSysString(7114) ? gDataManager->GetSysString(7114).data() : L"In Domain",
+						 DeckBuilder::LIMITATION_FILTER_IN_DOMAIN);
 	if(!white) {
 		chkAnime->setEnabled(true);
 		cbLimit->addItem(gDataManager->GetSysString(1900).data(), DeckBuilder::LIMITATION_FILTER_OCG);
@@ -3562,6 +3628,7 @@ void Game::ReloadCBDuelRule(irr::gui::IGUIComboBox* cb) {
 	cb->addItem(gDataManager->GetSysString(1259).data());
 	cb->addItem(gDataManager->GetSysString(1248).data());
 	cb->addItem(gDataManager->HasSysString(7103) ? gDataManager->GetSysString(7103).data() : L"Genesys");
+	cb->addItem(gDataManager->HasSysString(7111) ? gDataManager->GetSysString(7111).data() : L"Domain");
 }
 void Game::ReloadCBRule() {
 	cbRule->clear();
@@ -3656,6 +3723,7 @@ void Game::ReloadElementsStrings() {
 
 	prev = cbDuelRule->getSelected();
 	if (prev >= 7) {
+		// keeps Genesys, Domain and the custom rule
 		UpdateDuelParam();
 	} else {
 		ReloadCBDuelRule();

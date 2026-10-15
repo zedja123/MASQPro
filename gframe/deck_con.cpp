@@ -141,6 +141,7 @@ void DeckBuilder::ImportDeck() {
 		else
 			(void)DeckManager::ImportDeckBase64Omega(current_deck, text);
 		RefreshLimitationStatus();
+		OnDeckMasterChanged();
 	}
 }
 void DeckBuilder::ExportDeckToClipboard(bool plain_text) {
@@ -202,6 +203,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				}
 				case 8: {
 					options.duelFlags = DUEL_MODE_GENESYS;
+					break;
+				}
+				case 9: {
+					options.duelFlags = DUEL_MODE_DOMAIN;
 					break;
 				}
 				}
@@ -359,7 +364,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				auto old_skills = DeckManager::TypeCount(gdeckManager->pre_deck.main, TYPE_SKILL);
 				auto new_skills = DeckManager::TypeCount(current_deck.main, TYPE_SKILL);
 				if((current_deck.main.size() - new_skills) != (gdeckManager->pre_deck.main.size() - old_skills)
-				   || current_deck.extra.size() != gdeckManager->pre_deck.extra.size()) {
+				   || current_deck.extra.size() != gdeckManager->pre_deck.extra.size()
+				   || current_deck.master != gdeckManager->pre_deck.master) {
 					mainGame->PopupMessage(gDataManager->GetSysString(1408));
 					break;
 				}
@@ -367,7 +373,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				const auto& deck = current_deck;
 				uint8_t deckbuf[0xf000];
 				auto* pdeck = deckbuf;
-				static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 2;
+				// counts, cards and the Deck Master trailer
+				static constexpr auto max_deck_size = sizeof(deckbuf) / sizeof(uint32_t) - 4;
 				const auto totsize = deck.main.size() + deck.extra.size() + deck.side.size();
 				if(totsize > max_deck_size) {
 					mainGame->PopupMessage(gDataManager->GetSysString(1410));
@@ -381,6 +388,10 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					BufferIO::Write<uint32_t>(pdeck, pcard->code);
 				for(const auto& pcard : deck.side)
 					BufferIO::Write<uint32_t>(pdeck, pcard->code);
+				if(deck.master) {
+					BufferIO::Write<uint32_t>(pdeck, DECK_MASTER_TRAILER);
+					BufferIO::Write<uint32_t>(pdeck, deck.master->code);
+				}
 				DuelClient::SendBufferToServer(CTOS_UPDATE_DECK, deckbuf, pdeck - deckbuf);
 				gdeckManager->sent_deck = current_deck;
 				break;
@@ -514,6 +525,9 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 			switch(id) {
 			case COMBOBOX_DBLFLIST: {
 				filterList = &gdeckManager->_lfList[mainGame->cbDBLFList->getSelected()];
+				// A Domain list is edited with the Deck Master pane.
+				if(filterList->domain)
+					mainGame->chkDomain->setChecked(true);
 				mainGame->ReloadCBLimit();
 				StartFilter(true);
 				break;
@@ -622,6 +636,22 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					}
 					break;
 				}
+				case CHECKBOX_DOMAIN: {
+					// Switch to a Domain list when the current one is not one.
+					if(mainGame->chkDomain->isChecked() && !(filterList && filterList->domain)) {
+						for(size_t i = 0; i < gdeckManager->_lfList.size(); ++i) {
+							if(!gdeckManager->_lfList[i].domain)
+								continue;
+							mainGame->cbDBLFList->setSelected(static_cast<irr::s32>(i));
+							filterList = &gdeckManager->_lfList[i];
+							mainGame->ReloadCBLimit();
+							StartFilter(true);
+							break;
+						}
+					}
+					GetHoveredCard();
+					break;
+				}
 				case CHECKBOX_SHOW_ANIME: {
 					int prevLimit = mainGame->cbLimit->getSelected();
 					mainGame->ReloadCBLimit();
@@ -650,6 +680,9 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				break;
 			if(hovered_pos == 0 || hovered_seq == -1)
 				break;
+			// Domain: the Deck Master cannot be changed while siding.
+			if(hovered_pos == 5 && mainGame->is_siding)
+				break;
 			click_pos = hovered_pos;
 			dragx = event.MouseInput.X;
 			dragy = event.MouseInput.Y;
@@ -666,6 +699,8 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				pop_extra(hovered_seq);
 			else if(hovered_pos == 3)
 				pop_side(hovered_seq);
+			else if(hovered_pos == 5)
+				pop_master();
 			mouse_pos.set(event.MouseInput.X, event.MouseInput.Y);
 			GetHoveredCard();
 			break;
@@ -687,13 +722,27 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				pushed = push_side(dragging_pointer, hovered_seq + is_lastcard, forceInput);
 			else if(hovered_pos == 4 && !mainGame->is_siding)
 				pushed = true;
+			else if(hovered_pos == 5) {
+				// Domain: a card moved from the Main or Extra Deck swaps
+				// places with the previous Deck Master.
+				const auto* previous = current_deck.master;
+				pushed = push_master(dragging_pointer);
+				if(pushed && previous) {
+					if(click_pos == 1 || click_pos == 2) {
+						if(!push_main(previous, -1, true))
+							push_extra(previous, -1, true);
+					}
+				}
+			}
 			if(!pushed) {
 				if(click_pos == 1)
 					push_main(dragging_pointer);
 				else if(click_pos == 2)
 					push_extra(dragging_pointer);
 				else if(click_pos == 3)
-					push_side(dragging_pointer);
+					push_side(dragging_pointer, -1, true);
+				else if(click_pos == 5)
+					push_master(dragging_pointer);
 			}
 			is_draging = false;
 			break;
@@ -704,7 +753,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 			if(mainGame->is_siding) {
 				if(is_draging)
 					break;
-				if(hovered_pos == 0 || hovered_seq == -1)
+				if(hovered_pos == 0 || hovered_seq == -1 || hovered_pos == 5)
 					break;
 				auto pointer = gDataManager->GetCardData(hovered_code);
 				if(!pointer)
@@ -732,11 +781,18 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					pop_extra(hovered_seq);
 				} else if(hovered_pos == 3) {
 					pop_side(hovered_seq);
+				} else if(hovered_pos == 5) {
+					pop_master();
 				} else {
 					auto pointer = gDataManager->GetCardData(hovered_code);
 					if(!pointer || (!gGameConfig->ignoreDeckContents && !check_limit(pointer)))
 						break;
-					if (event.MouseInput.Shift) {
+					// Domain: Shift (or the first monster while there is no
+					// Deck Master) sets the Deck Master.
+					if(mainGame->IsDomainActive() && CanBeDeckMaster(pointer)
+					   && (event.MouseInput.Shift || !current_deck.master)) {
+						push_master(pointer);
+					} else if (event.MouseInput.Shift) {
 						push_side(pointer, -1, gGameConfig->ignoreDeckContents);
 					}
 					else {
@@ -745,7 +801,18 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 					}
 				}
 			} else {
-				if(click_pos == 1) {
+				if(mainGame->IsDomainActive()) {
+					// Domain: no Side Deck, the card goes back where it was.
+					if(click_pos == 1)
+						push_main(dragging_pointer);
+					else if(click_pos == 2)
+						push_extra(dragging_pointer);
+					else if(click_pos == 3) {
+						if(!push_extra(dragging_pointer) && !push_main(dragging_pointer))
+							push_side(dragging_pointer, -1, true);
+					} else if(click_pos == 5)
+						push_master(dragging_pointer);
+				} else if(click_pos == 1) {
 					push_side(dragging_pointer);
 				} else if(click_pos == 2) {
 					push_side(dragging_pointer);
@@ -766,7 +833,7 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				break;
 			if (mainGame->wCategories->isVisible() || mainGame->wQuery->isVisible())
 				break;
-			if (hovered_pos == 0 || hovered_seq == -1)
+			if (hovered_pos == 0 || hovered_seq == -1 || hovered_pos == 5)
 				break;
 			if (is_draging)
 				break;
@@ -853,10 +920,15 @@ bool DeckBuilder::OnEvent(const irr::SEvent& event) {
 				epro::wstringview text{ event.DropEvent.Text };
 				if(starts_with(text, L"ydke://")) {
 					gdeckManager->ImportDeckYdke(current_deck, text);
+					RefreshLimitationStatus();
+					OnDeckMasterChanged();
 					return true;
 				}
-				if(gdeckManager->ImportDeckBase64Omega(current_deck, text))
+				if(gdeckManager->ImportDeckBase64Omega(current_deck, text)) {
+					RefreshLimitationStatus();
+					OnDeckMasterChanged();
 					return true;
+				}
 				std::wstringstream ss(Utils::ToUpperNoAccents(text));
 				std::wstring to;
 				int firstcode = 0;
@@ -1003,6 +1075,34 @@ void DeckBuilder::GetHoveredCard() {
 			hovered_seq = seq;
 			hovered_code = current_deck.extra[hovered_seq]->code;
 			is_lastcard = x >= 772;
+			return;
+		}
+		if(y >= 564 && y <= 628 && mainGame->IsDomainActive()) {
+			// Domain: the Deck Master slot, then the Side Deck cards (if any)
+			// from DOMAIN_SIDE_X on.
+			if(x < Game::DOMAIN_SIDE_X - 6) {
+				hovered_pos = 5;
+				if(!current_deck.master || x > 314 + CARD_THUMB_WIDTH)
+					return;
+				hovered_seq = 0;
+				hovered_code = current_deck.master->code;
+				return;
+			}
+			int pile_size = static_cast<int>(current_deck.side.size());
+			if(pile_size == 0)
+				return;
+			hovered_pos = 3;
+			const auto width = 794 - Game::DOMAIN_SIDE_X - CARD_THUMB_WIDTH;
+			const auto dx = Game::DomainSideStep(pile_size);
+			auto seq = static_cast<int>((x - Game::DOMAIN_SIDE_X) / dx);
+			if(x - Game::DOMAIN_SIDE_X >= width)
+				seq = pile_size - 1;
+			if(seq >= pile_size) {
+				hovered_pos = 0;
+				return;
+			}
+			hovered_seq = seq;
+			hovered_code = current_deck.side[hovered_seq]->code;
 			return;
 		}
 		if(y >= 564 && y <= 628) {
@@ -1334,6 +1434,10 @@ bool DeckBuilder::CheckCardProperties(const CardDataM& data) {
 				if(filterList->GetPoints(&data._data) == 0)
 					return false;
 				break;
+			case LIMITATION_FILTER_IN_DOMAIN:
+				if(!IsInCurrentDomain(&data._data))
+					return false;
+				break;
 			default:
 				break;
 		}
@@ -1446,6 +1550,8 @@ void DeckBuilder::ClearDeck() {
 	current_deck.main.clear();
 	current_deck.extra.clear();
 	current_deck.side.clear();
+	current_deck.master = nullptr;
+	OnDeckMasterChanged();
 
 	main_and_extra_legend_count_monster = 0;
 	main_legend_count_spell = 0;
@@ -1650,6 +1756,9 @@ bool DeckBuilder::push_side(const CardDataC* pointer, int seq, bool forced) {
 	auto& container = current_deck.side;
 	if(!mainGame->is_siding && !forced && container.size() >= 15)
 		return false;
+	// Domain decks have no Side Deck.
+	if(!mainGame->is_siding && !forced && mainGame->IsDomainActive())
+		return false;
 	if(seq >= 0 && seq < (int)container.size())
 		container.insert(container.begin() + seq, pointer);
 	else
@@ -1657,6 +1766,47 @@ bool DeckBuilder::push_side(const CardDataC* pointer, int seq, bool forced) {
 	GetHoveredCard();
 	RefreshLimitationStatusOnAdded(pointer, DeckType::SIDE);
 	return true;
+}
+bool DeckBuilder::CanBeDeckMaster(const CardDataC* card) {
+	return (card->type & TYPE_MONSTER) && !(card->type & (TYPE_TOKEN | TYPE_SKILL));
+}
+// Domain: the Deck Master is a single Main or Extra Deck monster.
+bool DeckBuilder::push_master(const CardDataC* pointer) {
+	if(mainGame->is_siding || !CanBeDeckMaster(pointer))
+		return false;
+	current_deck.master = pointer;
+	GetHoveredCard();
+	OnDeckMasterChanged();
+	return true;
+}
+void DeckBuilder::pop_master() {
+	current_deck.master = nullptr;
+	GetHoveredCard();
+	OnDeckMasterChanged();
+}
+// The "In Domain" filter depends on the Deck Master.
+void DeckBuilder::OnDeckMasterChanged() {
+	if(!mainGame->is_building || mainGame->is_siding)
+		return;
+	const auto sel = mainGame->cbLimit->getSelected();
+	if(sel >= 0 && mainGame->cbLimit->getItemData(sel) == LIMITATION_FILTER_IN_DOMAIN)
+		StartFilter(true);
+}
+bool DeckBuilder::IsInCurrentDomain(const CardDataC* card) {
+	if(card->ot & (SCOPE_RUSH | SCOPE_LEGEND) || card->type & (TYPE_SKILL | TYPE_TOKEN))
+		return false;
+	const auto* master = current_deck.master;
+	if(!master)
+		return CanBeDeckMaster(card);
+	if(!filterList || !filterList->domain)
+		return true;
+	if(domain_cache_master != master || domain_cache_list != filterList || domain_cache_hash != filterList->hash) {
+		domain_cache = DeckManager::GetDomain(*filterList, master);
+		domain_cache_master = master;
+		domain_cache_list = filterList;
+		domain_cache_hash = filterList->hash;
+	}
+	return DeckManager::IsInDomain(card, domain_cache);
 }
 void DeckBuilder::pop_main(int seq) {
 	auto& container = current_deck.main;
@@ -1690,10 +1840,15 @@ bool DeckBuilder::check_limit(const CardDataC* pointer) {
 	auto it = filterList->GetLimitationIterator(pointer);
 	if(it != endit)
 		limit = it->second;
+	// Domain: one copy of each card, Deck Master included.
+	const bool domain = mainGame->IsDomainActive();
+	if(domain)
+		limit = std::min(limit, 1);
 	if(limit == 0)
 		return false;
 	const auto& deck = current_deck;
-	for(auto* plist : { &deck.main, &deck.extra, &deck.side }) {
+	const Deck::Vector master{ (domain && deck.master) ? Deck::Vector{ deck.master } : Deck::Vector{} };
+	for(auto* plist : { &master, &deck.main, &deck.extra, &deck.side }) {
 		for(auto& pcard : *plist) {
 			if(pcard->code == limitcode || pcard->alias == limitcode) {
 				if((it = filterList->content.find(pcard->code)) != endit)

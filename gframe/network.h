@@ -37,6 +37,10 @@ static inline bool operator!=(const DeckSizes& one, const DeckSizes& other) {
 	return !(one == other);
 }
 
+// Domain format: CTOS_UPDATE_DECK carries the Deck Master after the side
+// codes as [u32 DECK_MASTER_TRAILER][u32 code]. Older servers ignore it.
+constexpr uint32_t DECK_MASTER_TRAILER = 0x215A4D44; // "DMZ!"
+
 struct HostInfo {
 	uint32_t lflist;
 	uint8_t rule;
@@ -123,7 +127,14 @@ struct DeckError {
 		TOOMANYLEGENDS,
 		TOOMANYSKILLS,
 		// 0xE and 0xF are reserved by Multirole (CARD_TCG_PRE, CARD_OCG_PRE).
-		GENESYSPOINTS = 0x10
+		GENESYSPOINTS = 0x10,
+		// Domain format: missing or invalid Deck Master (code = its code or
+		// 0), card outside the Deck Master's domain, second copy of a card,
+		// forbidden Deck Master.
+		DOMAIN_DECK_MASTER = 0x11,
+		DOMAIN_OUT_OF_DOMAIN = 0x12,
+		DOMAIN_SINGLETON = 0x13,
+		DOMAIN_FORBIDDEN_DM = 0x14
 	};
 	DERR_TYPE type = DERR_TYPE::NONE;
 	struct {
