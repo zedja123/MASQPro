@@ -398,6 +398,11 @@ def main():
 	with open(ydk, 'w') as f:
 		f.write('#main\n100\n#master \r\n46986414\n55\n#extra\n200\n!side\n300\n')
 	expect(h.one('ydk ' + ydk) == 'ydk 100 200 300 46986414', 'ydk #master in the middle, first code wins')
+	expect(h.one('ydkflat ' + ydk) == 'ydk 100,200 - 300 46986414', 'ydk #master in the middle, READY path keeps the Extra Deck')
+	with open(ydk, 'w') as f:
+		f.write('#created by x\n#master\n46986414\n#main\n100\n101\n#extra\n200\n!side\n300\n')
+	expect(h.one('ydk ' + ydk) == 'ydk 100,101 200 300 46986414', 'ydk #master first, #main ends it')
+	expect(h.one('ydkflat ' + ydk) == 'ydk 100,101,200 - 300 46986414', 'ydk #master first, READY path')
 	with open(ydk, 'w') as f:
 		f.write('#main\n100\n#extra\n200\n!side\n')
 	expect(h.one('ydk ' + ydk) == 'ydk 100 200 - 0', 'ydk without #master')

@@ -489,10 +489,15 @@ static bool LoadCardList(const epro::path_string& name, cardlist_type* mainlist 
 		if(str.empty())
 			continue;
 		if(str[0] == '#') {
-			if(str.substr(0, str.find_last_not_of(" \t") + 1) == "#master") {
+			const auto header = str.substr(0, str.find_last_not_of(" \t") + 1);
+			if(header == "#master") {
 				is_master = true;
 				continue;
 			}
+			// Any other section header ends the Deck Master section, also on
+			// the path that does not separate the Extra Deck.
+			if(header == "#main" || header == "#extra")
+				is_master = false;
 			if(!extralist || str != "#extra")
 				continue;
 			is_extra = true;
